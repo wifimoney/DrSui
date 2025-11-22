@@ -5,12 +5,17 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Switch } from "./ui/switch";
 import { Label } from "./ui/label";
+import { fromHex } from "@mysten/sui/utils";
 import { decryptXrayRecord } from "../services/mockBackend";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { PermissionSwitch } from "./patient/PermissionSwitch";
-import { useCurrentAccount } from "@mysten/dapp-kit";
+import { useCurrentAccount, useSignPersonalMessage, useSuiClient } from "@mysten/dapp-kit";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
-import { getFullnodeUrl } from "@mysten/sui/client";
+import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
+import { blobIdFromInt } from "@mysten/walrus";
+import { walrusImageUrl } from "../lib/walrus_utils";
+import { SealClient, SessionKey } from "@mysten/seal";
+import { Transaction } from "@mysten/sui/transactions";
 
 interface XrayRecordCardProps {
   id: string;
@@ -19,6 +24,7 @@ interface XrayRecordCardProps {
   isShared?: boolean; // Optional for doctor view
   isDoctorView?: boolean; // Flag to determine view mode
   onShareToggle?: (newState: boolean) => void;
+  index?: number; // Index position of this card in the list
 }
 
 export function XrayRecordCard({ 
@@ -27,13 +33,32 @@ export function XrayRecordCard({
   date, 
   isShared = false,
   isDoctorView = false,
-  onShareToggle 
+  onShareToggle,
+  index = 0
 }: XrayRecordCardProps) {
+  console.log("XrayRecordCard component rendered", { id, title, index });
   const patient_registry = import.meta.env.VITE_PATIENT_REGISTRY;
+  const package_id = import.meta.env.VITE_PACKAGE_ID;
+  // Seal server configuration
+  const serverObjectIds = [
+    "0x164ac3d2b3b8694b8181c13f671950004765c23f270321a45fdd04d40cccf0f2", 
+    "0x5466b7df5c15b508678d51496ada8afab0d6f70a01c10613123382b1b8131007"
+  ];
+  const suiClient = useSuiClient();
+  const sealClient = new SealClient({
+    suiClient,
+    serverConfigs: serverObjectIds.map((id) => ({
+        objectId: id,
+        weight: 1,
+    })),
+    verifyKeyServers: false,
+  });
+  const { mutateAsync: signPersonalMessage } = useSignPersonalMessage();
   const [isDecrypted, setIsDecrypted] = useState(false);
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [recordData, setRecordData] = useState<any>(null);
+  const [owned, setOwned] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const currentAccount = useCurrentAccount();
   const client = new SuiJsonRpcClient({
@@ -50,8 +75,16 @@ export function XrayRecordCard({
     return patientData;
   };
   useEffect(() => {
+    console.log("useEffect called in XrayRecordCard");
+    console.log("currentAccount:", currentAccount);
+    console.log("currentAccount?.address:", currentAccount?.address);
+    
     const fetchData = async () => {
-      if (!currentAccount?.address) return;
+      console.log("Fetching data...");
+      if (!currentAccount?.address) {
+        console.log("No account address, returning early");
+        return;
+      }
       
       setIsLoading(true);
       try {
@@ -69,15 +102,33 @@ export function XrayRecordCard({
             },
           });
           console.log("Owned:", owned);
+          setOwned(owned);
           
-          // Extract and store the record data
-          const recordFields = (owned as any)?.data?.content?.fields?.value?.fields;
-          if (recordFields) {
-            setRecordData(recordFields);
-            console.log('Body Parts:', recordFields.body_parts);
-            console.log('Blob:', recordFields.blob);
-            console.log('Patient:', recordFields.patient);
-            console.log('Uploader:', recordFields.uploader);
+          // Get the object ID from the dynamic field value
+          const ownedId = (owned as any)?.data?.content?.fields?.value;
+          console.log("Owned ID:", ownedId);
+          
+          if (ownedId) {
+            // Fetch the full object data using the ownedId
+            const objectData = await client.getObject({
+              id: ownedId,
+              options: {
+                showContent: true,
+              },
+            });
+            console.log('Object data:', objectData);
+            
+            // Extract record fields from the object data (same structure as App.tsx)
+            const recordFields = (objectData as any)?.data?.content?.fields;
+            console.log("recordFields:", recordFields);
+            
+            if (recordFields) {
+              setRecordData(recordFields);
+              console.log('Body Parts:', recordFields.body_parts);
+              console.log('Blob:', recordFields.blob);
+              console.log('Patient:', recordFields.patient);
+              console.log('Uploader:', recordFields.uploader);
+            }
           }
         }
       } catch (error) {
@@ -92,21 +143,139 @@ export function XrayRecordCard({
   const handleDecrypt = async () => {
     setIsDecrypting(true);
     try {
-      // Call mock backend
-      const response = await decryptXrayRecord({
-        blobId: id,
-        encryptedKey: "mock-encrypted-key", // In real app, this comes from record data
-        requesterWallet: "0x71C...9A21", // Current user wallet
-        userType: isDoctorView ? 'doctor' : 'patient'
+      // Get blob ID from owned data
+      console.log('Owned:', owned);
+      const ownedId = (owned as any)?.data?.content?.fields?.value;
+      const objectData = await client.getObject({
+        id: ownedId,
+        options: {
+          showContent: true,
+        },
       });
+      console.log('Object data:', objectData);
+      const recordFields = (objectData as any)?.data?.content?.fields;
 
-      if (response.success && response.imageUrl) {
-        setImageUrl(response.imageUrl);
-        setIsDecrypted(true);
-      } else {
-        console.error("Decryption failed:", response.error);
-        // Handle error (toast, alert, etc.)
+      console.log("recordFields:", recordFields);
+      
+      // Get body part for this record based on the card's position/index
+      let bodyPart = 'unknown';
+      if (recordFields?.body_parts && recordFields.body_parts.length > 0) {
+        // Use the index to get the corresponding body part
+        bodyPart = recordFields.body_parts[index] || recordFields.body_parts[0];
+      } else if (recordData?.body_parts && recordData.body_parts.length > 0) {
+        // Fallback to recordData
+        bodyPart = recordData.body_parts[index] || recordData.body_parts[0];
       }
+      console.log('Body part:', bodyPart);
+      // Construct filename in format: ${account?.address}-${bodyPart}.json
+      const accountAddress = currentAccount?.address || '';
+
+      const fileName = `${accountAddress}-${bodyPart}.json`;
+      console.log('File name:', fileName);
+      console.log('Body part:', bodyPart);
+      
+      // Get blob data - the blob array corresponds to body_parts by index
+      const blobData = recordFields?.blob?.[index] || recordFields?.blob?.[0];
+      console.log('Blob data:', blobData);
+      
+      // Extract blob_id from the blob structure
+      // Blob structure from blockchain: { fields: { blob_id: "101684021963897672628454749071710670679042034548234599894850465957679589925488", id: { id: "0x..." } } }
+      // blob_id is stored as a STRING representation of a big integer
+      const blobIdString = blobData?.fields?.blob_id;
+      console.log('Blob ID (string):', blobIdString);
+      
+      if (!blobIdString) {
+        throw new Error("Could not find blob_id in blob data");
+      }
+      
+      // Convert string to BigInt, then use blobIdFromInt to convert to the format Walrus expects
+      const blobIdBigInt = BigInt(blobIdString);
+      console.log('Blob ID (BigInt):', blobIdBigInt);
+      const rawBlobId = blobIdFromInt(blobIdBigInt);
+      console.log('Raw Blob ID (for Walrus):', rawBlobId);
+      const AGGREGATOR = 'https://aggregator.walrus-testnet.walrus.space';
+      const directUrl = `${AGGREGATOR}/v1/blobs/by-quilt-id/${rawBlobId}/${fileName}`;
+      console.log('Fetching image from Walrus aggregator:', directUrl);
+      
+      const res = await fetch(directUrl);
+      if (!res.ok) {
+        console.error(`Failed to fetch image: HTTP ${res.status}`);
+        throw new Error(`HTTP ${res.status}`);
+      }
+      console.log('Response:', res);
+      const imageBlob = await res.blob();
+      console.log('imageBlob:', imageBlob);
+      const imageBlobArray = new Uint8Array(await imageBlob.arrayBuffer());
+      console.log('imageBlobArray:', imageBlobArray);
+      const sessionKey = await SessionKey.create({
+          address: currentAccount?.address || '',
+          packageId: package_id,
+          ttlMin: 10, // TTL of 10 minutes
+          suiClient: new SuiClient({ url: getFullnodeUrl('testnet') }),
+      });
+      console.log("Signing session key...");
+      const message = sessionKey.getPersonalMessage();
+      console.log("Message created...");
+      const { signature } = await signPersonalMessage({ message }); // User confirms in wallet
+      console.log("Signature created...");
+      sessionKey.setPersonalMessageSignature(signature); // Initialization complete
+      console.log("Session key created...");
+      // Create the Transaction for evaluating the seal_approve function.
+      console.log("Creating transaction...");
+      const tx = new Transaction();
+      const idBytes = fromHex("0x1");
+      const moduleName = "client_decryption";
+      
+      // Get the correct object ID - try from blob data or owned object
+      const objectId = blobData?.id?.id || 
+                       (owned as any)?.data?.content?.fields?.value?.id?.id ||
+                       recordFields?.id?.id;
+      
+      if (!objectId) {
+        throw new Error("Could not find object ID for seal_approve");
+      }
+      
+      tx.moveCall({
+        target: `${package_id}::${moduleName}::seal_approve`,
+        arguments: [
+            tx.pure.vector("u8", idBytes),
+            tx.object(objectId)
+        ]
+      });
+      const txBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
+      console.log("Decrypting data...");
+      const decryptedBytes = await sealClient.decrypt({ data: imageBlobArray, sessionKey, txBytes });
+      
+      const decryptedSizeMB = (decryptedBytes.length / (1024 * 1024)).toFixed(2);
+      
+      // Print detailed information about the decrypted data
+      console.log("=== DECRYPTED DATA ===");
+      console.log("Decrypted data size:", decryptedSizeMB, "MB");
+      console.log("Raw decrypted bytes:", decryptedBytes);
+      console.log("Type:", typeof decryptedBytes);
+      console.log("Length:", decryptedBytes.length, "bytes");
+      console.log("First 100 bytes:", decryptedBytes.slice(0, 100));
+      
+      const decryptedData = new Uint8Array(decryptedBytes.buffer || decryptedBytes);
+      console.log("Uint8Array length:", decryptedData.length);
+      console.log("First 50 bytes as array:", Array.from(decryptedData.slice(0, 50)));
+      
+      // Create a new Uint8Array copy for the Blob to avoid type issues
+      const finalData = Uint8Array.from(decryptedData);
+      // Use image MIME type for X-ray images
+      const mimeType = "image/jpeg"; // or "image/png" depending on your image format
+      const blob = new Blob([finalData], { type: mimeType });
+      const blobSizeMB = (blob.size / (1024 * 1024)).toFixed(2);
+      console.log("Blob created - size:", blobSizeMB, "MB, type:", blob.type);
+      console.log("=========================");
+      const url = URL.createObjectURL(blob);
+      console.log('blobId (string):', blobIdString);
+      console.log('blobId (BigInt):', blobIdBigInt);
+      console.log('Decrypted image URL:', url);
+      
+      // Use the decrypted blob URL instead of mock backend
+      setImageUrl(url);
+      setIsDecrypted(true);
     } catch (error) {
       console.error("Decryption error:", error);
     } finally {
@@ -155,9 +324,18 @@ export function XrayRecordCard({
             <div className="flex items-start justify-between mb-2">
               <div>
                 <h3 className="font-semibold text-lg text-foreground">
-                  {recordData?.body_parts?.length > 0 
-                    ? `${recordData.body_parts[0].charAt(0).toUpperCase() + recordData.body_parts[0].slice(1)} X-Ray`
-                    : title}
+                  {(() => {
+                    // Get body part based on card index
+                    const bodyPart = recordData?.body_parts?.[index] || 
+                                    recordData?.body_parts?.[0] || 
+                                    null;
+                    if (bodyPart) {
+                      // Properly capitalize: first letter uppercase, rest lowercase
+                      const capitalized = bodyPart.charAt(0).toUpperCase() + bodyPart.slice(1).toLowerCase();
+                      return `${capitalized} X-Ray`;
+                    }
+                    return title;
+                  })()}
                 </h3>
                 <p className="text-sm text-muted-foreground">{date}</p>
               </div>

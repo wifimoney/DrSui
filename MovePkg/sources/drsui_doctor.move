@@ -23,7 +23,7 @@ module drsui::doctor {
             id: object::new(ctx),
             doctor_list: vector::empty()
         };
-        transfer::share_object(registry)
+        transfer::share_object(registry);
     }
 
     fun mint_doctor_cap(ctx: &mut TxContext): DoctorCap {
