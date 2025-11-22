@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Eye, Share2, Lock, Unlock, FileText, Loader2 } from "lucide-react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
@@ -8,6 +8,9 @@ import { Label } from "./ui/label";
 import { decryptXrayRecord } from "../services/mockBackend";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { PermissionSwitch } from "./patient/PermissionSwitch";
+import { useCurrentAccount } from "@mysten/dapp-kit";
+import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import { getFullnodeUrl } from "@mysten/sui/client";
 
 interface XrayRecordCardProps {
   id: string;
@@ -26,10 +29,66 @@ export function XrayRecordCard({
   isDoctorView = false,
   onShareToggle 
 }: XrayRecordCardProps) {
+  const patient_registry = import.meta.env.VITE_PATIENT_REGISTRY;
   const [isDecrypted, setIsDecrypted] = useState(false);
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [recordData, setRecordData] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const currentAccount = useCurrentAccount();
+  const client = new SuiJsonRpcClient({
+    url: getFullnodeUrl('testnet'),
+    network: 'testnet',
+  });
+  const patientData = async () => {
+    const patientData = await client.getObject({
+      id: patient_registry,
+      options: {
+        showContent: true,
+      },
+    });
+    return patientData;
+  };
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!currentAccount?.address) return;
+      
+      setIsLoading(true);
+      try {
+        const data = await patientData();
+        console.log(data);
+        const registryId = (data as any)?.data?.content?.fields?.registry?.fields?.id?.id;
+        
+        if (registryId) {
+          console.log('Registry ID:', registryId);
+          const owned = await client.getDynamicFieldObject({
+            parentId: registryId,
+            name: {
+              type: 'address',
+              value: currentAccount.address,
+            },
+          });
+          console.log("Owned:", owned);
+          
+          // Extract and store the record data
+          const recordFields = (owned as any)?.data?.content?.fields?.value?.fields;
+          if (recordFields) {
+            setRecordData(recordFields);
+            console.log('Body Parts:', recordFields.body_parts);
+            console.log('Blob:', recordFields.blob);
+            console.log('Patient:', recordFields.patient);
+            console.log('Uploader:', recordFields.uploader);
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching patient data:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
+    fetchData();
+  }, [currentAccount?.address]);
   const handleDecrypt = async () => {
     setIsDecrypting(true);
     try {
@@ -95,16 +154,45 @@ export function XrayRecordCard({
           <div>
             <div className="flex items-start justify-between mb-2">
               <div>
-                <h3 className="font-semibold text-lg text-foreground">{title}</h3>
+                <h3 className="font-semibold text-lg text-foreground">
+                  {recordData?.body_parts?.length > 0 
+                    ? `${recordData.body_parts[0].charAt(0).toUpperCase() + recordData.body_parts[0].slice(1)} X-Ray`
+                    : title}
+                </h3>
                 <p className="text-sm text-muted-foreground">{date}</p>
               </div>
-              <Badge variant="outline" className="font-mono text-xs">
-                ID: {id}
-              </Badge>
             </div>
+            
+            {/* Display Body Parts */}
+            {recordData?.body_parts && recordData.body_parts.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-2 mb-2">
+                {recordData.body_parts.map((part: string, index: number) => (
+                  <Badge key={index} variant="secondary" className="text-xs">
+                    {part}
+                  </Badge>
+                ))}
+              </div>
+            )}
+            
+            {isLoading && (
+              <p className="text-sm text-muted-foreground mt-2">Loading record data...</p>
+            )}
+            
             <p className="text-sm text-muted-foreground mt-2">
               Stored securely on Walrus. Decryption required to view details.
             </p>
+            
+            {/* Display additional info if available */}
+            {recordData && (
+              <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+                {recordData.blob && Array.isArray(recordData.blob) && recordData.blob.length > 0 && (
+                  <p>Blob ID: {recordData.blob[0]?.id || 'N/A'}</p>
+                )}
+                {recordData.uploader && Array.isArray(recordData.uploader) && recordData.uploader.length > 0 && (
+                  <p>Uploader: {recordData.uploader[0]?.slice(0, 6)}...{recordData.uploader[0]?.slice(-4)}</p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="mt-6 flex items-center justify-between gap-4">

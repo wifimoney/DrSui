@@ -22,8 +22,7 @@ export function WalletButton() {
       trigger={
         <Button 
         variant="default"
-        className="bg-[#0B7285] hover:bg-[#0B7285]/90 text-white px-6 gap-2 border-0"
-        style={{ backgroundColor: '#0B7285' }}
+        className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-glow px-6 gap-2"
         >
             <Wallet className="h-4 w-4" />
             CONNECT
