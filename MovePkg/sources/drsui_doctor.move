@@ -1,6 +1,6 @@
 module drsui::doctor {
 
-    use drsui::patient::XRayImages;
+    use drsui::patient::{XRayImages, ValidateRequest};
     use sui::table::{Self, Table};
 
     public struct DoctorCap has key, store {
@@ -10,6 +10,7 @@ module drsui::doctor {
     
     public struct DoctorRegistry has key, store {
         id: UID,
+        doctor_requests: Table<address, vector<ID>>,
         doctor_list: vector<address>
     }
 
@@ -21,7 +22,8 @@ module drsui::doctor {
     fun init(ctx: &mut TxContext){
         let registry = DoctorRegistry {
             id: object::new(ctx),
-            doctor_list: vector::empty()
+            doctor_requests: table::new<address, vector<ID>>(ctx),
+            doctor_list: vector::empty<address>()
         };
         transfer::share_object(registry);
     }
@@ -49,6 +51,15 @@ module drsui::doctor {
         registry.doctor_list.push_back(ctx.sender());
         transfer::public_transfer(doctor_cap, ctx.sender());
         transfer::public_transfer(doctor_img, ctx.sender());
+    }
+
+    public fun add_doctor_request(self: &mut DoctorRegistry, request: &XRayImages, validation: ValidateRequest, doctor: address, ctx: &mut TxContext) {
+        if(self.doctor_requests.contains(ctx.sender())){
+            self.doctor_requests.borrow_mut(ctx.sender()).push_back(request.x_ray_data());
+        } else {
+            self.doctor_requests.add(ctx.sender(), vector::singleton(request.x_ray_data()));
+        };
+        validation.destroy_request();
     }
 
     public fun doctor_id(self: &DoctorCap): ID {

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog@1.1.6";
-import { XIcon } from "lucide-react@0.487.0";
+import { X } from "lucide-react"; // Changed from XIcon to X
 
 import { cn } from "./utils";
 
@@ -26,7 +26,7 @@ function DialogPortal({
   
   React.useEffect(() => {
     setMounted(true);
-    console.log('📌 DialogPortal mounted, will render to body');
+    // console.log('📌 DialogPortal mounted, will render to body'); 
   }, []);
 
   if (!mounted) return null;
@@ -92,8 +92,9 @@ function DialogContent({
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-accent data-[state=open]:text-muted-foreground absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4">
-          <XIcon />
+        {/* UPDATED: Positioned to right-4 top-4 and swapped XIcon for X */}
+        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-md p-2 text-foreground/60 hover:text-foreground hover:bg-muted/80 transition-all border border-border/50 hover:border-border disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <X className="size-5" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>
       </DialogPrimitive.Content>
