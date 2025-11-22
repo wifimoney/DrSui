@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Inbox, Users, Settings, ZoomIn, Contrast, Ruler, Lock, Unlock, Activity } from "lucide-react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
