@@ -1,0 +1,233 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* Typography */
+  --font-sans: 'Inter', sans-serif;
+  --font-heading: 'TWK Everett', 'Inter', sans-serif;
+  --font-size: 16px;
+
+  /* Color Palette */
+  --background: #FFFFFF; /* Cloud */
+  --foreground: #030F1C; /* Deep Ocean */
+  
+  --card: #FFFFFF; /* Cloud */
+  --card-foreground: #030F1C; /* Deep Ocean */
+  
+  --popover: #FFFFFF; /* Cloud */
+  --popover-foreground: #030F1C; /* Deep Ocean */
+  
+  --primary: #4DA2FF; /* Sea */
+  --primary-foreground: #030F1C; /* Deep Ocean */
+  
+  --secondary: #C0E6FF; /* Aqua */
+  --secondary-foreground: #030F1C; /* Deep Ocean */
+  
+  --muted: #F0F9FF; /* Light Aqua mix */
+  --muted-foreground: #64748B; /* Slate-500 - keeping for readability */
+  
+  --accent: #C0E6FF; /* Aqua */
+  --accent-foreground: #030F1C; /* Deep Ocean */
+  
+  --destructive: #EF4444;
+  --destructive-foreground: #FFFFFF;
+  
+  --border: #C0E6FF; /* Aqua */
+  --input: #C0E6FF; /* Aqua */
+  
+  --ring: #4DA2FF; /* Sea */
+  
+  /* Custom Design System Colors */
+  --status-green: #10B981;
+  --status-amber: #F59E0B;
+  
+  --primary-hover: #3B82F6; /* Darker Sea */
+
+  /* Legacy/Existing variables mapped to new palette */
+  --input-background: #FFFFFF;
+  --switch-background: #CBD5E1;
+  
+  --radius: 0.5rem; /* Rounded corners */
+  
+  /* Charts */
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+
+  --sidebar: #011829; /* Ocean */
+  --sidebar-foreground: #FFFFFF; /* Cloud */
+  --sidebar-primary: #4DA2FF; /* Sea */
+  --sidebar-primary-foreground: #030F1C;
+  --sidebar-accent: #030F1C; /* Deep Ocean */
+  --sidebar-accent-foreground: #C0E6FF; /* Aqua */
+  --sidebar-border: #1E293B;
+  --sidebar-ring: #4DA2FF;
+}
+
+.dark {
+  --background: #030F1C; /* Deep Ocean */
+  --foreground: #FFFFFF; /* Cloud */
+  --card: #011829; /* Ocean */
+  --card-foreground: #FFFFFF; /* Cloud */
+  --popover: #011829; /* Ocean */
+  --popover-foreground: #FFFFFF; /* Cloud */
+  --primary: #4DA2FF; /* Sea */
+  --primary-foreground: #030F1C; /* Deep Ocean */
+  --secondary: #011829; /* Ocean */
+  --secondary-foreground: #4DA2FF; /* Sea */
+  --muted: #011829; /* Ocean */
+  --muted-foreground: #94A3B8; /* Slate-400 */
+  --accent: #011829; /* Ocean */
+  --accent-foreground: #4DA2FF; /* Sea */
+  --destructive: #7F1D1D;
+  --destructive-foreground: #F8FAFC;
+  --border: #1E293B; /* Slate-800 - Keeping for subtle borders */
+  --input: #1E293B;
+  --ring: #4DA2FF; /* Sea */
+}
+
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-heading: var(--font-heading);
+  
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  
+  --color-status-green: var(--status-green);
+  --color-status-amber: var(--status-amber);
+  --color-primary-hover: var(--primary-hover);
+  
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  
+  /* Custom Effects */
+  --shadow-soft: 0 4px 20px -2px rgba(0,0,0,0.06);
+  --shadow-glow: 0 0 8px 0 rgba(77,162,255,0.3); /* Updated to Sea color */
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+  }
+}
+
+/**
+ * Typography System
+ * Mapped to the specific requirements
+ */
+@layer base {
+  :where(:not(:has([class*=' text-']), :not(:has([class^='text-'])))) {
+    h1 {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+
+    h2 {
+      font-size: 24px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      line-height: 1.3;
+    }
+
+    h3 {
+      font-size: 18px;
+      font-weight: 500;
+      line-height: 1.4;
+    }
+
+    h4 {
+      font-size: 16px;
+      font-weight: 500;
+      line-height: 1.5;
+    }
+
+    p {
+      font-size: 14px;
+      font-weight: 400;
+      line-height: 1.5;
+    }
+
+    /* Label style applied to labels and can be used as utility */
+    label {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    
+    button {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    input {
+      font-size: 14px;
+      font-weight: 400;
+    }
+  }
+}
+
+@layer utilities {
+  .shadow-soft {
+    box-shadow: var(--shadow-soft);
+  }
+  
+  .shadow-glow {
+    box-shadow: var(--shadow-glow);
+  }
+  
+  /* Utility for Label/Caption if not using <label> tag */
+  .text-caption {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+}
+
+html {
+  font-size: var(--font-size);
+}
