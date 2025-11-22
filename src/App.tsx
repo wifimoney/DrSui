@@ -9,6 +9,7 @@ import { UploadModal } from "./components/UploadModal";
 import { DoctorPortal } from "./components/DoctorPortal";
 import NetworkLogos from "./imports/NetworkLogos";
 import walrusLogo from "./assets/0d79301d3b94cfc4f3db4e1ffc0849c9831d8154.png";
+import sealLogo from "./assets/a54f7d54f2a70ea73274247c6ec42b59cf2acd80.png";
 import { LanguageProvider, useLanguage } from "./components/LanguageContext";
 import { useCurrentAccount, ConnectModal } from "@mysten/dapp-kit";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
@@ -296,7 +297,7 @@ function AppContent() {
         )}
       </div>
 
-      {/* Footer with Powered by Sui and Walrus */}
+      {/* Footer with Powered by Sui, Walrus, and Seal */}
       <footer className="border-t border-border py-8 bg-card/50 backdrop-blur-sm mt-auto">
         <div className="max-w-7xl mx-auto px-8 flex flex-col md:flex-row items-center justify-center gap-12">
           {/* Sui Section */}
@@ -316,6 +317,19 @@ function AppContent() {
             <div className="flex items-center gap-3 h-8">
                <img src={walrusLogo} alt="Walrus" className="h-full w-auto object-contain" />
                <span className="font-bold text-xl tracking-tight text-foreground">Walrus</span>
+            </div>
+          </div>
+
+          {/* Divider for larger screens */}
+          <div className="hidden md:block h-12 w-px bg-border" />
+
+          {/* Seal Section */}
+          <div className="flex flex-col items-center justify-center gap-2">
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">
+              {t("footer.poweredBy")}
+            </p>
+            <div className="flex items-center gap-3 h-8">
+               <img src={sealLogo} alt="Seal" className="h-full w-auto object-contain" />
             </div>
           </div>
         </div>
