@@ -1,0 +1,14 @@
+# Package configuration for the DrSui medical records contract.
+# This package defines the smart contract for storing immutable proof of AI medical diagnoses on Sui.
+
+[package]
+name = "dr_sui"
+version = "0.0.1"
+edition = "2024.beta"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+
+[addresses]
+dr_sui = "0x0"
+
