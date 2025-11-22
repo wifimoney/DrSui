@@ -1,6 +1,6 @@
 import { LayoutDashboard, Stethoscope } from "lucide-react";
 import { useLanguage } from "./LanguageContext";
-import drSuiLogo from "../assets/DrSui.png";
+import drSuiLogo from "../assets/drsui_symbol.png";
 import { WalletButton } from "./WalletButton";
 
 interface NavigationProps {
@@ -16,7 +16,11 @@ export function Navigation({ currentPage, onNavigate }: NavigationProps) {
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         <div className="flex items-center gap-8">
           <div className="flex items-center gap-2">
-            <img src={drSuiLogo} alt="DrSui Logo" className="h-10 w-auto object-contain" />
+            <img 
+              src={drSuiLogo} 
+              alt="DrSui Logo" 
+              className="h-10 w-auto object-contain drop-shadow-[0_0_8px_rgba(20,184,166,0.3)] transition-all hover:drop-shadow-[0_0_12px_rgba(20,184,166,0.5)]" 
+            />
             <span className="text-foreground font-semibold text-lg">DrSui</span>
           </div>
           
