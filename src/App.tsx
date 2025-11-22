@@ -58,15 +58,31 @@ function AppContent() {
             name: {
               type: 'address',
               value: account.address,
-            },
+    },
           });
           console.log('Owned:', owned);
+          
+          // Check if dynamic field was not found (user hasn't registered yet)
+          if ((owned as any)?.error?.code === 'dynamicFieldNotFound') {
+            console.log('User has not registered yet - no records found');
+            setXrayRecords([]);
+            setIsLoadingRecords(false);
+            return;
+          }
+          
           const ownedId = (owned as any)?.data?.content?.fields?.value;
+          if (!ownedId) {
+            console.log('No owned ID found');
+            setXrayRecords([]);
+            setIsLoadingRecords(false);
+            return;
+          }
+          
           const objectData = await client.getObject({
             id: ownedId,
             options: {
               showContent: true,
-            },
+    },
           });
           console.log('Object data:', objectData);
           const recordFields = (objectData as any)?.data?.content?.fields;
@@ -143,13 +159,19 @@ function AppContent() {
     }
   };
 
-  const handleShareToggle = (id: string, newState: boolean) => {
+  const handleShareToggle = (id: string, newState: boolean, doctorAddress?: string) => {
     setXrayRecords((prev: typeof xrayRecords) => 
       prev.map((record: typeof xrayRecords[0]) => 
         record.id === id ? { ...record, isShared: newState } : record
       )
     );
+    if (newState && doctorAddress) {
+      console.log(`Sharing record ${id} with doctor at address: ${doctorAddress}`);
+      // TODO: Implement actual sharing logic with the doctor's address
+      // This could involve calling a Move function to grant access to the doctor
+    } else {
     console.log(`Toggled share for ${id} to ${newState}`);
+    }
   };
 
   return (
@@ -198,50 +220,50 @@ function AppContent() {
             </main>
           ) : (
             // Patient Dashboard (Wallet Connected)
-            <main className="max-w-5xl mx-auto px-8 py-12 w-full">
-              {/* Header Section */}
-              <div className="mb-8 flex items-center justify-between">
-                <div>
-                  <h1 className="text-foreground text-3xl font-bold tracking-tight mb-2">{t("patient.title")}</h1>
-                  <p className="text-muted-foreground">{t("patient.subtitle")}</p>
-                </div>
-                <Button 
-                  onClick={() => setShowUploadModal(true)} 
-                  className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-glow"
-                >
-                  <Upload className="mr-2 size-4" />
-                  {t("patient.upload")}
-                </Button>
+          <main className="max-w-5xl mx-auto px-8 py-12 w-full">
+            {/* Header Section */}
+            <div className="mb-8 flex items-center justify-between">
+              <div>
+                <h1 className="text-foreground text-3xl font-bold tracking-tight mb-2">{t("patient.title")}</h1>
+                <p className="text-muted-foreground">{t("patient.subtitle")}</p>
               </div>
+              <Button 
+                onClick={() => setShowUploadModal(true)} 
+                className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-glow"
+              >
+                <Upload className="mr-2 size-4" />
+                {t("patient.upload")}
+              </Button>
+            </div>
 
-              {/* Stats Row */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <StatCard
-                  icon={<FileText className="size-6 text-primary" />}
-                  label={t("patient.totalRecords")}
-                  value={xrayRecords.length.toString()}
-                />
-                <StatCard
-                  icon={<Database className="size-6 text-primary" />}
-                  label={t("patient.storageUsed")}
-                  value="2.4 GB"
-                />
-                <StatCard
-                  icon={<Users className="size-6 text-primary" />}
-                  label={t("patient.activeShares")}
+            {/* Stats Row */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              <StatCard
+                icon={<FileText className="size-6 text-primary" />}
+                label={t("patient.totalRecords")}
+                value={xrayRecords.length.toString()}
+              />
+              <StatCard
+                icon={<Database className="size-6 text-primary" />}
+                label={t("patient.storageUsed")}
+                value="2.4 GB"
+              />
+              <StatCard
+                icon={<Users className="size-6 text-primary" />}
+                label={t("patient.activeShares")}
                   value={xrayRecords.filter((r: typeof xrayRecords[0]) => r.isShared).length.toString()}
-                />
-              </div>
+              />
+            </div>
 
-              {/* Medical Files List */}
-              <div className="space-y-6">
-                <div className="flex items-center justify-between pb-2 border-b border-border">
-                  <h2 className="text-lg font-semibold text-foreground">{t("patient.recordsListTitle")}</h2>
+            {/* Medical Files List */}
+            <div className="space-y-6">
+              <div className="flex items-center justify-between pb-2 border-b border-border">
+                <h2 className="text-lg font-semibold text-foreground">{t("patient.recordsListTitle")}</h2>
                   <span className="text-sm text-muted-foreground font-mono">
                     {t("patient.wallet")}: {account.address.slice(0, 6)}...{account.address.slice(-4)}
                   </span>
-                </div>
-                
+              </div>
+              
                 {isLoadingRecords ? (
                   <div className="text-center py-8 text-muted-foreground">
                     Loading records...
@@ -253,20 +275,20 @@ function AppContent() {
                 ) : (
                   <>
                     {xrayRecords.map((record: typeof xrayRecords[0], index: number) => (
-                      <XrayRecordCard
-                        key={record.id}
-                        id={record.id}
-                        title={record.title}
-                        date={record.date}
-                        isShared={record.isShared}
-                        onShareToggle={(newState) => handleShareToggle(record.id, newState)}
+                <XrayRecordCard
+                  key={record.id}
+                  id={record.id}
+                  title={record.title}
+                  date={record.date}
+                  isShared={record.isShared}
+                        onShareToggle={(newState, doctorAddress) => handleShareToggle(record.id, newState, doctorAddress)}
                         index={index}
-                      />
-                    ))}
+                />
+              ))}
                   </>
                 )}
-              </div>
-            </main>
+            </div>
+          </main>
           )
         ) : (
           <DoctorPortal />

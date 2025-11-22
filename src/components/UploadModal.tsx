@@ -231,7 +231,45 @@ export function UploadModal({ onClose, onSuccess }: UploadModalProps) {
       if (!blob_objectId) {
         throw new Error('Failed to create blob object. Please try again.');
       }
+      
+      // Check if user has existing records (to determine which function to call)
+      let isFirstTimeUser = false;
+      try {
+        const registryData = await client.getObject({
+          id: patient_registry,
+          options: { showContent: true },
+        });
+        const registryId = (registryData as any)?.data?.content?.fields?.registry?.fields?.id?.id;
+        
+        if (registryId) {
+          const owned = await client.getDynamicFieldObject({
+            parentId: registryId,
+            name: {
+              type: 'address',
+              value: account.address,
+            },
+          });
+          
+          // If dynamic field not found, user is registering for the first time
+          if ((owned as any)?.error?.code === 'dynamicFieldNotFound') {
+            isFirstTimeUser = true;
+            console.log('First-time user detected - will use upload_data_from_patient');
+          } else {
+            console.log('Existing user detected - will use audit_data');
+          }
+        }
+      } catch (checkError) {
+        console.warn('Could not check user registration status, assuming first-time user:', checkError);
+        isFirstTimeUser = true;
+      }
+      
       const tx = new Transaction();
+      
+      if (isFirstTimeUser) {
+        // First-time user: use upload_data_from_patient (creates new XRayImages)
+        // Note: upload_data_from_patient has assert!(!self.registry.contains(ctx.sender()), 0)
+        // which means it requires the user to NOT be in the registry
+        console.log('Calling upload_data_from_patient for first-time user');
       tx.moveCall({
         target: `${package_id}::patient::upload_data_from_patient`,
         arguments: [
@@ -241,6 +279,42 @@ export function UploadModal({ onClose, onSuccess }: UploadModalProps) {
           tx.pure.string(bodyPart)
         ]
       });
+      } else {
+        // Existing user: use audit_data (adds to existing XRayImages)
+        // Note: audit_data has assert!(self.registry.contains(ctx.sender()), 0)
+        // which means it requires the user to be in the registry
+        console.log('Calling audit_data for existing user');
+        // First, get the existing XRayImages object ID
+        const registryData = await client.getObject({
+          id: patient_registry,
+          options: { showContent: true },
+        });
+        const registryId = (registryData as any)?.data?.content?.fields?.registry?.fields?.id?.id;
+        const owned = await client.getDynamicFieldObject({
+          parentId: registryId,
+          name: {
+            type: 'address',
+            value: account.address,
+          },
+        });
+        const ownedId = (owned as any)?.data?.content?.fields?.value;
+        const xrayObjectData = await client.getObject({
+          id: ownedId,
+          options: { showContent: true },
+        });
+        const xrayObjectId = (xrayObjectData as any)?.data?.objectId;
+        
+        tx.moveCall({
+          target: `${package_id}::patient::audit_data`,
+          arguments: [
+            tx.object(patient_registry),
+            tx.object(xrayObjectId),
+            tx.pure.string(bodyPart),
+            tx.object(blob_objectId)
+          ]
+        });
+      }
+      
       // Extract blob ID from transaction info
       let blobId = `BLOB-${Date.now()}`;
       if (info.objectChanges) {

@@ -45,8 +45,16 @@ module drsui::patient {
             duration
         }
     }
-
+    public fun audit_data(self: &mut PatientRegistry, x_ray: &mut XRayImages, body_part: String, blob: Blob, ctx: &mut TxContext) {
+        assert!(self.registry.contains(ctx.sender()), 0);
+        let x_ray_id = self.registry.borrow_mut(ctx.sender());
+        assert!(x_ray_id == x_ray.id.to_inner(), 1);
+        x_ray.uploader.push_back(ctx.sender());
+        x_ray.blob.push_back(blob);
+        x_ray.body_parts.push_back(body_part);
+    }
     public fun upload_data_from_patient(self: &mut PatientRegistry, doctor: address, blob: Blob, body_part: String, ctx: &mut TxContext) {
+        assert!(!self.registry.contains(ctx.sender()), 0);
         let x_ray = XRayImages {
             id: object::new(ctx),
             patient: ctx.sender(),
@@ -54,13 +62,7 @@ module drsui::patient {
             blob: vector::singleton(blob),
             body_parts: vector::singleton<String>(body_part)
         };
-        if (self.registry.contains(ctx.sender())){
-            let current_data = self.registry.borrow_mut(ctx.sender());
-            *current_data = *&x_ray.id.to_inner();
-        }
-        else{
-            self.registry.add(ctx.sender(), *&x_ray.id.to_inner());
-        };
+        self.registry.add(ctx.sender(), *&x_ray.id.to_inner());
         transfer::share_object(x_ray);
     }
     public fun get_patient(self: &XRayImages): address {
