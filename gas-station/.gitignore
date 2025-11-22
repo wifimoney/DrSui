@@ -7,6 +7,7 @@ node_modules/
 # Logs
 *.log
 npm-debug.log*
+logs.json
 
 # OS files
 .DS_Store

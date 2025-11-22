@@ -19,10 +19,18 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import rateLimit from 'express-rate-limit';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { SuiClient, getFullnodeUrl } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { fromBase64, toBase64 } from '@mysten/sui/utils';
+
+// Get current directory for ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Load environment variables
 dotenv.config();
@@ -32,6 +40,9 @@ const SPONSOR_SECRET_KEY = process.env.SPONSOR_SECRET_KEY;
 const ALLOWED_PACKAGE_ID = process.env.ALLOWED_PACKAGE_ID;
 const SUI_NETWORK = process.env.SUI_NETWORK || 'testnet';
 const PORT = process.env.PORT || 3001;
+const RATE_LIMIT_DISABLED = process.env.RATE_LIMIT_DISABLED === 'true';
+const ADMIN_KEY = process.env.ADMIN_KEY; // Optional admin key for accessing logs
+const LOGS_FILE = path.join(__dirname, 'logs.json');
 
 // Validate required environment variables
 if (!SPONSOR_SECRET_KEY) {
@@ -97,6 +108,153 @@ app.use((req, res, next) => {
   next();
 });
 
+/**
+ * Rate Limiting System
+ * 
+ * Why Rate Limiting is Critical:
+ * - Prevents abuse: Malicious users could spam transactions and drain the sponsor wallet
+ * - Cost control: Limits gas spending to prevent unexpected expenses
+ * - Fair usage: Ensures all users get fair access to sponsored transactions
+ * - Security: Protects against DoS attacks and wallet draining
+ * 
+ * We implement three layers of rate limiting:
+ * 1. Per-IP limiting: Max 10 requests per IP per hour (prevents single IP abuse)
+ * 2. Global limiting: Max 50 requests total per hour (prevents overall abuse)
+ * 3. Per-address limiting: Max 5 requests per Sui address per hour (prevents wallet abuse)
+ */
+
+// Per-address rate limiting storage
+// Maps Sui address -> { count: number, resetTime: number }
+const addressLimits = new Map();
+
+// Global rate limit counter
+let globalRequestCount = 0;
+let globalResetTime = Date.now() + (60 * 60 * 1000); // 1 hour from now
+
+/**
+ * Clean up expired address limits
+ * Runs every 5 minutes to prevent memory leaks
+ */
+setInterval(() => {
+  const now = Date.now();
+  for (const [address, data] of addressLimits.entries()) {
+    if (now > data.resetTime) {
+      addressLimits.delete(address);
+    }
+  }
+  
+  // Reset global counter if time expired
+  if (now > globalResetTime) {
+    globalRequestCount = 0;
+    globalResetTime = now + (60 * 60 * 1000);
+  }
+}, 5 * 60 * 1000); // Every 5 minutes
+
+/**
+ * Check per-address rate limit
+ * @param {string} address - Sui address to check
+ * @returns {Object} { allowed: boolean, remaining: number, resetTime: number }
+ */
+function checkAddressLimit(address) {
+  const now = Date.now();
+  const limit = addressLimits.get(address);
+  
+  // Max 5 requests per address per hour
+  const MAX_PER_ADDRESS = 5;
+  const WINDOW_MS = 60 * 60 * 1000; // 1 hour
+  
+  if (!limit || now > limit.resetTime) {
+    // No limit or expired, create new entry
+    addressLimits.set(address, {
+      count: 0,
+      resetTime: now + WINDOW_MS
+    });
+    return {
+      allowed: true,
+      remaining: MAX_PER_ADDRESS,
+      resetTime: now + WINDOW_MS
+    };
+  }
+  
+  if (limit.count >= MAX_PER_ADDRESS) {
+    return {
+      allowed: false,
+      remaining: 0,
+      resetTime: limit.resetTime
+    };
+  }
+  
+  return {
+    allowed: true,
+    remaining: MAX_PER_ADDRESS - limit.count,
+    resetTime: limit.resetTime
+  };
+}
+
+/**
+ * Increment per-address rate limit counter
+ * @param {string} address - Sui address
+ */
+function incrementAddressLimit(address) {
+  const limit = addressLimits.get(address);
+  if (limit) {
+    limit.count++;
+  }
+}
+
+/**
+ * Check global rate limit
+ * @returns {Object} { allowed: boolean, remaining: number, resetTime: number }
+ */
+function checkGlobalLimit() {
+  const now = Date.now();
+  const MAX_GLOBAL = 50; // Max 50 requests per hour globally
+  
+  if (now > globalResetTime) {
+    // Reset window
+    globalRequestCount = 0;
+    globalResetTime = now + (60 * 60 * 1000);
+  }
+  
+  return {
+    allowed: globalRequestCount < MAX_GLOBAL,
+    remaining: Math.max(0, MAX_GLOBAL - globalRequestCount),
+    resetTime: globalResetTime
+  };
+}
+
+/**
+ * Increment global rate limit counter
+ */
+function incrementGlobalLimit() {
+  globalRequestCount++;
+}
+
+// IP-based rate limiter using express-rate-limit
+// Max 10 requests per IP per hour
+const ipRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10, // Max 10 requests per IP per hour
+  message: {
+    error: 'Rate limit exceeded',
+    message: 'Too many requests from this IP. Maximum 10 sponsored transactions per hour per IP.',
+    retryAfter: '1 hour'
+  },
+  standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
+  legacyHeaders: false, // Disable `X-RateLimit-*` headers
+  skip: () => RATE_LIMIT_DISABLED // Skip if rate limiting is disabled
+});
+
+// Log rate limiting status
+if (RATE_LIMIT_DISABLED) {
+  console.warn('⚠️  WARNING: Rate limiting is DISABLED. This should only be used in development!');
+} else {
+  console.log('🛡️  Rate limiting enabled:');
+  console.log('   - Max 10 requests per IP per hour');
+  console.log('   - Max 50 requests globally per hour');
+  console.log('   - Max 5 requests per Sui address per hour');
+}
+
 // Initialize Sui client
 const client = new SuiClient({
   url: getFullnodeUrl(SUI_NETWORK)
@@ -125,6 +283,106 @@ const stats = {
   lastResetDate: new Date().toDateString(),
   requestHistory: [] // Store last 100 requests for analysis
 };
+
+/**
+ * Transaction Logging System
+ * 
+ * Comprehensive logging of all sponsored transactions for:
+ * - Debugging issues during hackathon demos
+ * - Impressing judges with observability
+ * - Tracking gas usage and patterns
+ * - Identifying abuse or anomalies
+ * 
+ * Each log entry contains:
+ * - timestamp: When the transaction was sponsored
+ * - sender: Sui address of the user
+ * - transactionDigest: Transaction digest (if available after execution)
+ * - gasCost: Estimated gas cost in MIST
+ * - status: 'success' | 'failed' | 'pending'
+ * - ipAddress: IP address of the requester
+ * - error: Error message if transaction failed
+ */
+const transactionLogs = [];
+
+// Maximum number of logs to keep in memory
+const MAX_LOGS = 1000;
+
+/**
+ * Load logs from file on startup (if file exists)
+ */
+function loadLogsFromFile() {
+  try {
+    if (fs.existsSync(LOGS_FILE)) {
+      const fileContent = fs.readFileSync(LOGS_FILE, 'utf8');
+      const logs = JSON.parse(fileContent);
+      transactionLogs.push(...logs);
+      // Keep only the most recent logs
+      if (transactionLogs.length > MAX_LOGS) {
+        transactionLogs.splice(0, transactionLogs.length - MAX_LOGS);
+      }
+      console.log(`📋 Loaded ${logs.length} transaction logs from file`);
+    }
+  } catch (error) {
+    console.warn('⚠️  Failed to load logs from file:', error.message);
+  }
+}
+
+/**
+ * Save logs to file periodically
+ */
+function saveLogsToFile() {
+  try {
+    // Keep only last 1000 logs in file
+    const logsToSave = transactionLogs.slice(-MAX_LOGS);
+    fs.writeFileSync(LOGS_FILE, JSON.stringify(logsToSave, null, 2), 'utf8');
+    console.log(`💾 Saved ${logsToSave.length} transaction logs to file`);
+  } catch (error) {
+    console.error('❌ Failed to save logs to file:', error.message);
+  }
+}
+
+// Load logs on startup
+loadLogsFromFile();
+
+// Save logs every 5 minutes
+setInterval(saveLogsToFile, 5 * 60 * 1000);
+
+// Save logs on graceful shutdown
+process.on('SIGINT', () => {
+  saveLogsToFile();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  saveLogsToFile();
+  process.exit(0);
+});
+
+/**
+ * Log a transaction
+ * @param {Object} logData - Transaction log data
+ */
+function logTransaction(logData) {
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    sender: logData.sender || 'unknown',
+    transactionDigest: logData.transactionDigest || null,
+    gasCost: logData.gasCost || 0,
+    gasCostSUI: logData.gasCost ? (Number(logData.gasCost) / 1_000_000_000).toFixed(6) : '0',
+    status: logData.status || 'pending',
+    ipAddress: logData.ipAddress || 'unknown',
+    error: logData.error || null
+  };
+  
+  transactionLogs.push(logEntry);
+  
+  // Keep only last MAX_LOGS entries
+  if (transactionLogs.length > MAX_LOGS) {
+    transactionLogs.shift(); // Remove oldest
+  }
+  
+  return logEntry;
+}
 
 // Reset daily counter if it's a new day
 function resetDailyStatsIfNeeded() {
@@ -269,9 +527,73 @@ function validateTransaction(txData) {
  *   sponsorAddress: string (sponsor's address for verification)
  * }
  */
-app.post('/sponsor', async (req, res) => {
+/**
+ * Rate Limiting Middleware for /sponsor endpoint
+ * 
+ * This middleware checks all three rate limits:
+ * 1. IP-based limit (handled by express-rate-limit)
+ * 2. Global limit (checked manually)
+ * 3. Per-address limit (checked manually)
+ * 
+ * Returns 429 Too Many Requests if any limit is exceeded.
+ */
+const sponsorRateLimitMiddleware = async (req, res, next) => {
+  // Skip rate limiting if disabled
+  if (RATE_LIMIT_DISABLED) {
+    return next();
+  }
+  
+  const { sender } = req.body;
+  
+  // Check global rate limit
+  const globalLimit = checkGlobalLimit();
+  if (!globalLimit.allowed) {
+    const retryAfter = Math.ceil((globalLimit.resetTime - Date.now()) / 1000);
+    return res.status(429).json({
+      error: 'Rate limit exceeded',
+      message: 'Global rate limit exceeded. Maximum 50 sponsored transactions per hour globally.',
+      retryAfter: retryAfter,
+      resetTime: new Date(globalLimit.resetTime).toISOString()
+    }).setHeader('Retry-After', retryAfter);
+  }
+  
+  // Check per-address rate limit
+  if (sender) {
+    const addressLimit = checkAddressLimit(sender);
+    if (!addressLimit.allowed) {
+      const retryAfter = Math.ceil((addressLimit.resetTime - Date.now()) / 1000);
+      return res.status(429).json({
+        error: 'Rate limit exceeded',
+        message: `Rate limit exceeded for address ${sender.slice(0, 6)}...${sender.slice(-4)}. Maximum 5 sponsored transactions per hour per address.`,
+        retryAfter: retryAfter,
+        resetTime: new Date(addressLimit.resetTime).toISOString()
+      }).setHeader('Retry-After', retryAfter);
+    }
+  }
+  
+  // All checks passed, continue to handler
+  next();
+};
+
+app.post('/sponsor', ipRateLimiter, sponsorRateLimitMiddleware, async (req, res) => {
+  // Get client IP address for logging
+  const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
+  
+  // Create log entry for this transaction (will be updated with result)
+  // We'll find and update it later by timestamp
+  let logTimestamp = null;
+  
   try {
     const { transactionBlockBytes, sender } = req.body;
+    
+    // Initialize log entry
+    const logEntry = logTransaction({
+      sender: sender || 'unknown',
+      status: 'pending',
+      ipAddress: clientIp,
+      gasCost: 0
+    });
+    logTimestamp = logEntry.timestamp; // Store timestamp to find entry later
 
     // Validate inputs
     if (!transactionBlockBytes) {
@@ -409,12 +731,31 @@ app.post('/sponsor', async (req, res) => {
     resetDailyStatsIfNeeded();
     stats.transactionsToday++;
     
+    // Increment rate limit counters (only if rate limiting is enabled)
+    if (!RATE_LIMIT_DISABLED) {
+      incrementGlobalLimit();
+      if (sender) {
+        incrementAddressLimit(sender);
+      }
+    }
+    
     // Estimate gas cost (we set budget to 0.01 SUI, actual may be less)
     const estimatedGasCost = 10000000n; // 0.01 SUI in MIST
     stats.totalGasSpent += estimatedGasCost;
 
     // Check balance after sponsorship
     const remainingBalance = await checkSponsorBalance();
+
+    // Update log entry with success status
+    if (logTimestamp) {
+      const logEntry = transactionLogs.find(log => log.timestamp === logTimestamp);
+      if (logEntry) {
+        logEntry.status = 'success';
+        logEntry.gasCost = estimatedGasCost.toString();
+        // Note: transactionDigest will be updated if frontend sends it back
+        // For now, we log the sponsorship (transaction execution happens on frontend)
+      }
+    }
 
     // Return the signed transaction data
     // Frontend will combine this with the user's signature and execute
@@ -432,6 +773,16 @@ app.post('/sponsor', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Error in /sponsor endpoint:', error);
+    
+    // Update log entry with failure status
+    if (logTimestamp) {
+      const logEntry = transactionLogs.find(log => log.timestamp === logTimestamp);
+      if (logEntry) {
+        logEntry.status = 'failed';
+        logEntry.error = error.message || 'Unknown error';
+      }
+    }
+    
     res.status(500).json({
       error: 'Internal server error',
       details: error.message
@@ -546,6 +897,267 @@ app.get('/balance', async (req, res) => {
 });
 
 /**
+ * Admin Authentication Middleware
+ * 
+ * Checks if ADMIN_KEY header matches the configured admin key.
+ * Used to protect sensitive endpoints like /logs.
+ */
+const adminAuth = (req, res, next) => {
+  const providedKey = req.headers['admin-key'] || req.headers['x-admin-key'];
+  
+  if (!ADMIN_KEY) {
+    return res.status(503).json({
+      error: 'Admin access not configured',
+      message: 'ADMIN_KEY environment variable is not set. This endpoint is disabled.'
+    });
+  }
+  
+  if (providedKey !== ADMIN_KEY) {
+    return res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Invalid admin key. Provide ADMIN_KEY in header.'
+    });
+  }
+  
+  next();
+};
+
+/**
+ * GET /logs - Get transaction logs
+ * 
+ * Returns comprehensive transaction logs for debugging and monitoring.
+ * 
+ * Query parameters:
+ * - limit: Number of logs to return (default: 100, max: 1000)
+ * - sender: Filter by sender address
+ * 
+ * Headers:
+ * - admin-key or x-admin-key: Admin authentication key
+ * 
+ * This endpoint requires admin authentication to prevent unauthorized access
+ * to sensitive transaction data.
+ */
+app.get('/logs', adminAuth, (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 100, 1000);
+    const senderFilter = req.query.sender;
+    
+    let logs = [...transactionLogs].reverse(); // Most recent first
+    
+    // Filter by sender if provided
+    if (senderFilter) {
+      logs = logs.filter(log => 
+        log.sender.toLowerCase().includes(senderFilter.toLowerCase())
+      );
+    }
+    
+    // Limit results
+    logs = logs.slice(0, limit);
+    
+    res.json({
+      total: transactionLogs.length,
+      returned: logs.length,
+      logs: logs,
+      filters: {
+        limit: limit,
+        sender: senderFilter || null
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error in /logs endpoint:', error);
+    res.status(500).json({
+      error: 'Failed to fetch logs',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * GET /stats - Get comprehensive statistics
+ * 
+ * Returns detailed analytics about sponsored transactions:
+ * - Total transactions sponsored
+ * - Total gas spent
+ * - Transactions per hour (last 24h)
+ * - Most active senders
+ * - Success rate
+ * 
+ * This endpoint is public (no auth required) and helps demonstrate
+ * observability to hackathon judges.
+ */
+app.get('/stats', (req, res) => {
+  try {
+    const now = Date.now();
+    const last24Hours = now - (24 * 60 * 60 * 1000);
+    
+    // Filter logs from last 24 hours
+    const recentLogs = transactionLogs.filter(log => {
+      const logTime = new Date(log.timestamp).getTime();
+      return logTime >= last24Hours;
+    });
+    
+    // Calculate transactions per hour (last 24h)
+    const transactionsPerHour = recentLogs.length / 24;
+    
+    // Calculate success rate
+    const successful = transactionLogs.filter(log => log.status === 'success').length;
+    const failed = transactionLogs.filter(log => log.status === 'failed').length;
+    const total = transactionLogs.length;
+    const successRate = total > 0 ? (successful / total) * 100 : 0;
+    
+    // Calculate total gas spent
+    const totalGasSpentMIST = transactionLogs.reduce((sum, log) => {
+      return sum + BigInt(log.gasCost || 0);
+    }, 0n);
+    const totalGasSpentSUI = Number(totalGasSpentMIST) / 1_000_000_000;
+    
+    // Find most active senders
+    const senderCounts = {};
+    transactionLogs.forEach(log => {
+      if (log.sender && log.sender !== 'unknown') {
+        senderCounts[log.sender] = (senderCounts[log.sender] || 0) + 1;
+      }
+    });
+    
+    const mostActiveSenders = Object.entries(senderCounts)
+      .map(([address, count]) => ({ address, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10) // Top 10
+      .map(({ address, count }) => ({
+        address: `${address.slice(0, 6)}...${address.slice(-4)}`,
+        fullAddress: address,
+        transactions: count
+      }));
+    
+    // Status breakdown
+    const statusBreakdown = {
+      success: transactionLogs.filter(log => log.status === 'success').length,
+      failed: transactionLogs.filter(log => log.status === 'failed').length,
+      pending: transactionLogs.filter(log => log.status === 'pending').length
+    };
+    
+    res.json({
+      overview: {
+        totalTransactions: total,
+        successfulTransactions: successful,
+        failedTransactions: failed,
+        successRate: successRate.toFixed(2) + '%',
+        totalGasSpent: {
+          sui: totalGasSpentSUI.toFixed(6),
+          mist: totalGasSpentMIST.toString()
+        }
+      },
+      last24Hours: {
+        transactions: recentLogs.length,
+        transactionsPerHour: transactionsPerHour.toFixed(2),
+        successful: recentLogs.filter(log => log.status === 'success').length,
+        failed: recentLogs.filter(log => log.status === 'failed').length
+      },
+      statusBreakdown: statusBreakdown,
+      mostActiveSenders: mostActiveSenders,
+      timeRange: {
+        oldestLog: transactionLogs.length > 0 ? transactionLogs[0].timestamp : null,
+        newestLog: transactionLogs.length > 0 ? transactionLogs[transactionLogs.length - 1].timestamp : null,
+        totalLogs: transactionLogs.length
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error in /stats endpoint:', error);
+    res.status(500).json({
+      error: 'Failed to fetch statistics',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * GET /limits - Get rate limit status for requester
+ * 
+ * Returns current rate limit status including:
+ * - IP-based limit status (from express-rate-limit headers)
+ * - Global limit status
+ * - Per-address limit status (if sender address provided)
+ * - Remaining requests
+ * - When limits reset
+ * 
+ * Query parameters:
+ * - address (optional): Sui address to check per-address limits
+ * 
+ * This endpoint helps users understand their rate limit status
+ * and when they can make more requests.
+ */
+app.get('/limits', (req, res) => {
+  try {
+    const { address } = req.query;
+    const clientIp = req.ip || req.connection.remoteAddress;
+    
+    // Get IP-based limit info (from express-rate-limit)
+    // Note: express-rate-limit doesn't expose this easily, so we'll estimate
+    const ipLimit = {
+      max: 10,
+      windowMs: 60 * 60 * 1000,
+      note: 'Check RateLimit-* headers for exact IP limit status'
+    };
+    
+    // Get global limit status
+    const globalLimit = checkGlobalLimit();
+    
+    // Get per-address limit status (if address provided)
+    let addressLimit = null;
+    if (address) {
+      addressLimit = checkAddressLimit(address);
+    }
+    
+    res.json({
+      rateLimiting: {
+        enabled: !RATE_LIMIT_DISABLED,
+        disabled: RATE_LIMIT_DISABLED
+      },
+      limits: {
+        perIp: {
+          max: 10,
+          window: '1 hour',
+          description: 'Maximum 10 sponsored transactions per IP address per hour'
+        },
+        global: {
+          max: 50,
+          current: globalRequestCount,
+          remaining: globalLimit.remaining,
+          resetTime: new Date(globalLimit.resetTime).toISOString(),
+          resetIn: Math.ceil((globalLimit.resetTime - Date.now()) / 1000),
+          window: '1 hour',
+          description: 'Maximum 50 sponsored transactions globally per hour'
+        },
+        perAddress: {
+          max: 5,
+          window: '1 hour',
+          description: 'Maximum 5 sponsored transactions per Sui address per hour',
+          ...(address ? {
+            address: `${address.slice(0, 6)}...${address.slice(-4)}`,
+            current: addressLimits.get(address)?.count || 0,
+            remaining: addressLimit?.remaining || 0,
+            resetTime: addressLimit ? new Date(addressLimit.resetTime).toISOString() : null,
+            resetIn: addressLimit ? Math.ceil((addressLimit.resetTime - Date.now()) / 1000) : null
+          } : {
+            note: 'Provide ?address=YOUR_SUI_ADDRESS to check per-address limits'
+          })
+        }
+      },
+      clientInfo: {
+        ip: clientIp,
+        note: 'IP-based limits are enforced per request'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error in /limits endpoint:', error);
+    res.status(500).json({
+      error: 'Failed to fetch rate limit status',
+      details: error.message
+    });
+  }
+});
+
+/**
  * GET /health - Health check endpoint
  * 
  * Simple endpoint to check if the server is running.
@@ -574,7 +1186,16 @@ app.listen(PORT, async () => {
   console.log(`   POST /sponsor - Sponsor a transaction`);
   console.log(`   GET  /status  - Get gas station status`);
   console.log(`   GET  /balance - Get detailed balance and statistics`);
+  console.log(`   GET  /stats   - Get comprehensive transaction statistics`);
+  console.log(`   GET  /logs    - Get transaction logs (requires admin key)`);
+  console.log(`   GET  /limits  - Get rate limit status`);
   console.log(`   GET  /health  - Health check`);
+  
+  if (ADMIN_KEY) {
+    console.log(`\n🔐 Admin endpoints enabled (ADMIN_KEY configured)`);
+  } else {
+    console.log(`\n⚠️  Admin endpoints disabled (set ADMIN_KEY in .env to enable /logs)`);
+  }
   
   // Check balance on startup
   console.log(`\n💰 Checking initial sponsor balance...`);

@@ -89,6 +89,8 @@ The server will start on port 3001 (or the port specified in `.env`).
 | `ALLOWED_PACKAGE_ID` | Your Sui Move package ID - only transactions to this package will be sponsored | ✅ Yes |
 | `SUI_NETWORK` | Sui network: `testnet`, `devnet`, or `mainnet` | ❌ No (defaults to `testnet`) |
 | `PORT` | Server port number | ❌ No (defaults to `3001`) |
+| `ADMIN_KEY` | Admin key for accessing `/logs` endpoint | ❌ No (optional) |
+| `RATE_LIMIT_DISABLED` | Set to `true` to disable rate limiting (dev only) | ❌ No (defaults to `false`) |
 
 ### Getting Your Package ID
 
@@ -191,6 +193,89 @@ Get detailed balance information and statistics.
 }
 ```
 
+### GET `/stats`
+
+Get comprehensive transaction statistics and analytics.
+
+**Response:**
+```json
+{
+  "overview": {
+    "totalTransactions": 150,
+    "successfulTransactions": 145,
+    "failedTransactions": 5,
+    "successRate": "96.67%",
+    "totalGasSpent": {
+      "sui": "1.450000",
+      "mist": "1450000000"
+    }
+  },
+  "last24Hours": {
+    "transactions": 42,
+    "transactionsPerHour": "1.75",
+    "successful": 40,
+    "failed": 2
+  },
+  "statusBreakdown": {
+    "success": 145,
+    "failed": 5,
+    "pending": 0
+  },
+  "mostActiveSenders": [
+    {
+      "address": "0x1234...5678",
+      "fullAddress": "0x1234567890abcdef...",
+      "transactions": 15
+    }
+  ],
+  "timeRange": {
+    "oldestLog": "2024-01-15T10:00:00.000Z",
+    "newestLog": "2024-01-15T14:30:00.000Z",
+    "totalLogs": 150
+  }
+}
+```
+
+### GET `/logs`
+
+Get detailed transaction logs (requires admin authentication).
+
+**Headers:**
+- `admin-key` or `x-admin-key`: Admin authentication key (must match `ADMIN_KEY` env var)
+
+**Query Parameters:**
+- `limit`: Number of logs to return (default: 100, max: 1000)
+- `sender`: Filter by sender address
+
+**Response:**
+```json
+{
+  "total": 150,
+  "returned": 100,
+  "logs": [
+    {
+      "timestamp": "2024-01-15T14:30:00.000Z",
+      "sender": "0x1234...5678",
+      "transactionDigest": "0xabc...def",
+      "gasCost": "10000000",
+      "gasCostSUI": "0.010000",
+      "status": "success",
+      "ipAddress": "192.168.1.1",
+      "error": null
+    }
+  ],
+  "filters": {
+    "limit": 100,
+    "sender": null
+  }
+}
+```
+
+**Status Codes:**
+- `200` - Success
+- `401` - Unauthorized (invalid or missing admin key)
+- `503` - Admin access not configured
+
 ### GET `/health`
 
 Simple health check endpoint.
@@ -200,6 +285,37 @@ Simple health check endpoint.
 {
   "status": "ok"
 }
+```
+
+## Transaction Logging
+
+The service includes comprehensive transaction logging:
+
+- **In-Memory Logs**: Last 1000 transactions stored in memory
+- **File Persistence**: Logs automatically saved to `logs.json` every 5 minutes
+- **Detailed Information**: Each log includes timestamp, sender, gas cost, status, IP address
+- **Analytics**: `/stats` endpoint provides comprehensive analytics
+- **Admin Access**: `/logs` endpoint requires admin key for security
+
+### Log File
+
+Logs are automatically saved to `logs.json` in the gas-station directory:
+- Saved every 5 minutes
+- Loaded on server startup
+- Contains last 1000 transactions
+- Automatically excluded from git (in `.gitignore`)
+
+### Admin Key Setup
+
+To access the `/logs` endpoint, set `ADMIN_KEY` in your `.env`:
+
+```env
+ADMIN_KEY=your-secret-admin-key-here
+```
+
+Then use it in requests:
+```bash
+curl -H "admin-key: your-secret-admin-key-here" http://localhost:3001/logs
 ```
 
 ## Monitoring

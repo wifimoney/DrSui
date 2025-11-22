@@ -6,6 +6,8 @@ import {
 } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { recordScan, recordVerification } from './AnalyticsPanel';
+import { useSponsoredTx } from '../hooks/useSponsoredTx';
+import { GasStationStatus } from './GasStationStatus';
 
 /**
  * React Environment Variables
@@ -36,6 +38,13 @@ const PACKAGE_ID = process.env.REACT_APP_PACKAGE_ID || process.env.VITE_PACKAGE_
 // Get Sui network from environment variable (optional)
 const SUI_NETWORK = process.env.REACT_APP_SUI_NETWORK || process.env.VITE_SUI_NETWORK || 'testnet';
 
+// Get gas station URL from environment variable
+// Supports both Vite (import.meta.env.VITE_*) and Create React App (process.env.REACT_APP_*)
+const GAS_STATION_URL = 
+  process.env.REACT_APP_GAS_STATION_URL || 
+  import.meta.env.VITE_GAS_STATION_URL || 
+  'http://localhost:3001';
+
 /**
  * UploadView Component
  * 
@@ -65,6 +74,12 @@ export function UploadView() {
   // TEE toggle: for demo purposes (visual only, shows Atoma Secure badge)
   const [useTEE, setUseTEE] = useState(false);
   
+  // Gasless transaction toggle: use sponsored transactions (default: true)
+  const [useGasless, setUseGasless] = useState(true);
+  
+  // Gas station status: stores the status from gas station service
+  const [sponsorStatus, setSponsorStatus] = useState(null);
+  
   // Error state: stores error messages to display to user
   const [error, setError] = useState(null);
 
@@ -76,7 +91,16 @@ export function UploadView() {
   const client = useSuiClient();
   
   // Get transaction execution hook for signing and submitting transactions
+  // This is used for normal (non-gasless) transactions
   const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
+  
+  // Get sponsored transaction hook for gasless transactions
+  // This handles the flow: build → sponsor → user sign → execute
+  const { 
+    executeSponsoredTransaction, 
+    loading: sponsorLoading, 
+    error: sponsorError 
+  } = useSponsoredTx();
 
   // ========== Environment Variable Validation ==========
   /**
@@ -91,6 +115,40 @@ export function UploadView() {
         'You will not be able to mint on-chain proofs until this is configured.'
       );
     }
+  }, []);
+
+  // ========== Gas Station Status Check ==========
+  /**
+   * Fetch gas station status on component mount
+   * This checks if the gas station service is online and available
+   * If offline, we'll disable gasless mode and show a warning
+   */
+  useEffect(() => {
+    const fetchGasStationStatus = async () => {
+      try {
+        const response = await fetch(`${GAS_STATION_URL}/status`);
+        if (response.ok) {
+          const status = await response.json();
+          setSponsorStatus(status);
+          console.log('✅ Gas station online:', status);
+        } else {
+          throw new Error(`Gas station returned status ${response.status}`);
+        }
+      } catch (err) {
+        console.warn('⚠️ Gas station offline or unreachable:', err.message);
+        setSponsorStatus(null);
+        // If gas station is offline, disable gasless mode
+        if (useGasless) {
+          setUseGasless(false);
+        }
+      }
+    };
+
+    fetchGasStationStatus();
+    
+    // Optionally refresh status every 30 seconds
+    const interval = setInterval(fetchGasStationStatus, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   // ========== File Selection Handler ==========
@@ -180,6 +238,17 @@ export function UploadView() {
    * handleMintProof
    * Creates and submits a Sui transaction to mint a Diagnosis NFT on-chain
    * This creates immutable proof that the AI diagnosis was made
+   * 
+   * Supports two modes:
+   * 1. Gasless Mode (useGasless = true): Uses sponsored transactions via gas station
+   *    - User doesn't need SUI for gas
+   *    - Gas station pays transaction fees
+   *    - Better UX for new users
+   * 
+   * 2. Normal Mode (useGasless = false): Traditional transaction flow
+   *    - User pays gas fees from their wallet
+   *    - Fallback if gas station is offline
+   *    - Requires user to have SUI in wallet
    */
   const handleMintProof = async () => {
     // Validation: Check if analysis result exists
@@ -249,43 +318,105 @@ export function UploadView() {
         ],
       });
 
-      // Sign and execute the transaction
-      // This will prompt user to approve in wallet and submit to Sui network
-      const result = await signAndExecute(
-        {
-          transaction: tx,
-          chain: 'testnet',
-        },
-        {
-          // Success callback: called when transaction is confirmed
-          onSuccess: (result) => {
-            // Store transaction digest (hash) for verification
+      // ===== GASLESS MODE: Sponsored Transaction Flow =====
+      // 
+      // If gasless mode is enabled, we use the sponsored transaction hook.
+      // This flow:
+      // 1. Builds transaction bytes (without gas payment)
+      // 2. Sends to gas station to get sponsor signature
+      // 3. User signs the sponsored transaction
+      // 4. Executes with both signatures (user + sponsor)
+      //
+      // Benefits:
+      // - User doesn't need SUI for gas
+      // - Better onboarding experience
+      // - Gas station validates transactions (security)
+      if (useGasless && sponsorStatus) {
+        try {
+          console.log('🚀 Using gasless transaction mode...');
+          
+          // Execute sponsored transaction
+          // This handles the complete flow: build → sponsor → sign → execute
+          const result = await executeSponsoredTransaction(tx);
+          
+          // Store transaction digest (hash) for verification
+          if (result?.digest) {
             setTxHash(result.digest);
-            console.log('Transaction successful:', result.digest);
+            console.log('✅ Gasless transaction successful:', result.digest);
             
             // Record blockchain verification in analytics
             recordVerification();
             
             // Dispatch event to update analytics panel
             window.dispatchEvent(new Event('drsui_stats_updated'));
-          },
-          // Error callback: called if transaction fails
-          onError: (error) => {
-            console.error('Transaction error:', error);
-            setError(`Transaction failed: ${error.message || 'Unknown error'}`);
-          },
+          }
+          
+        } catch (sponsorErr) {
+          // Handle gasless transaction errors
+          console.error('❌ Gasless transaction failed:', sponsorErr);
+          
+          // Offer to retry with normal mode
+          const errorMsg = sponsorErr.message || 'Gasless transaction failed';
+          setError(
+            `${errorMsg}. ` +
+            'You can try switching to normal mode (requires SUI in your wallet) or check if the gas station is online.'
+          );
+          
+          // Don't re-throw - let user decide to retry or switch modes
+          return;
         }
-      );
+      } 
+      // ===== NORMAL MODE: Traditional Transaction Flow =====
+      //
+      // If gasless mode is disabled or gas station is offline,
+      // we fall back to the traditional transaction flow where
+      // the user pays gas fees from their wallet.
+      //
+      // This requires:
+      // - User has SUI in their wallet
+      // - User approves transaction in wallet
+      // - User pays gas fees
+      else {
+        console.log('💰 Using normal transaction mode (user pays gas)...');
+        
+        // Sign and execute the transaction
+        // This will prompt user to approve in wallet and submit to Sui network
+        const result = await signAndExecute(
+          {
+            transaction: tx,
+            chain: 'testnet',
+          },
+          {
+            // Success callback: called when transaction is confirmed
+            onSuccess: (result) => {
+              // Store transaction digest (hash) for verification
+              setTxHash(result.digest);
+              console.log('Transaction successful:', result.digest);
+              
+              // Record blockchain verification in analytics
+              recordVerification();
+              
+              // Dispatch event to update analytics panel
+              window.dispatchEvent(new Event('drsui_stats_updated'));
+            },
+            // Error callback: called if transaction fails
+            onError: (error) => {
+              console.error('Transaction error:', error);
+              setError(`Transaction failed: ${error.message || 'Unknown error'}`);
+            },
+          }
+        );
 
-      // Also set txHash directly from result (if callback doesn't fire)
-      if (result?.digest) {
-        setTxHash(result.digest);
-        
-        // Record blockchain verification in analytics
-        recordVerification();
-        
-        // Dispatch event to update analytics panel
-        window.dispatchEvent(new Event('drsui_stats_updated'));
+        // Also set txHash directly from result (if callback doesn't fire)
+        if (result?.digest) {
+          setTxHash(result.digest);
+          
+          // Record blockchain verification in analytics
+          recordVerification();
+          
+          // Dispatch event to update analytics panel
+          window.dispatchEvent(new Event('drsui_stats_updated'));
+        }
       }
 
     } catch (err) {
@@ -440,7 +571,7 @@ export function UploadView() {
         </p>
 
         {/* TEE Toggle Checkbox (Visual Demo) */}
-        <div style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
           <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
             <input
               type="checkbox"
@@ -455,6 +586,78 @@ export function UploadView() {
               🔒 Atoma Secure
             </span>
           )}
+        </div>
+
+        {/* Gasless Transaction Toggle */}
+        <div style={{ 
+          marginBottom: '24px', 
+          padding: '16px', 
+          backgroundColor: useGasless ? '#f0fdfa' : '#f8fafc',
+          borderRadius: '8px',
+          border: `2px solid ${useGasless ? '#14b8a6' : '#e2e8f0'}`
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', cursor: sponsorStatus ? 'pointer' : 'not-allowed' }}>
+              <input
+                type="checkbox"
+                checked={useGasless}
+                onChange={(e) => setUseGasless(e.target.checked)}
+                disabled={!sponsorStatus}
+                style={{ marginRight: '8px', cursor: sponsorStatus ? 'pointer' : 'not-allowed' }}
+              />
+              <span style={{ fontWeight: '600', color: useGasless ? '#0d9488' : '#64748b' }}>
+                ⛽ Gasless Mode (Sponsored)
+              </span>
+            </label>
+            {useGasless && (
+              <span style={{ ...styles.badge, backgroundColor: '#10b981', color: 'white' }}>
+                Free!
+              </span>
+            )}
+          </div>
+          
+          {/* Gas Station Status */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+            {sponsorStatus ? (
+              <>
+                <span style={{ 
+                  width: '8px', 
+                  height: '8px', 
+                  borderRadius: '50%', 
+                  backgroundColor: '#10b981',
+                  display: 'inline-block'
+                }}></span>
+                <span style={{ fontSize: '14px', color: '#059669' }}>
+                  Gas Station Online
+                </span>
+                {sponsorStatus.balance && (
+                  <span style={{ fontSize: '14px', color: '#64748b', marginLeft: '8px' }}>
+                    • Gas Tank: {(Number(sponsorStatus.balance.totalBalance) / 1_000_000_000).toFixed(2)} SUI
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <span style={{ 
+                  width: '8px', 
+                  height: '8px', 
+                  borderRadius: '50%', 
+                  backgroundColor: '#ef4444',
+                  display: 'inline-block'
+                }}></span>
+                <span style={{ fontSize: '14px', color: '#dc2626' }}>
+                  Gas Station Offline
+                </span>
+              </>
+            )}
+          </div>
+          
+          {/* Info Text */}
+          <p style={{ fontSize: '12px', color: '#64748b', margin: 0, lineHeight: '1.5' }}>
+            {useGasless 
+              ? '💡 Gasless mode means we pay the transaction fees for you! You don\'t need any SUI in your wallet.'
+              : '💡 Normal mode requires SUI in your wallet to pay for transaction fees.'}
+          </p>
         </div>
 
         {/* File Upload Dropzone */}
@@ -634,25 +837,56 @@ export function UploadView() {
           {/* Verify on Sui Blockchain Button */}
           <button
             onClick={handleMintProof}
-            disabled={loading || !account || PACKAGE_ID === "YOUR_PACKAGE_ID_HERE"}
+            disabled={(loading || sponsorLoading) || !account || PACKAGE_ID === "YOUR_PACKAGE_ID_HERE"}
             style={{
               ...styles.button,
-              ...((loading || !account || PACKAGE_ID === "YOUR_PACKAGE_ID_HERE") && styles.buttonDisabled),
+              ...(((loading || sponsorLoading) || !account || PACKAGE_ID === "YOUR_PACKAGE_ID_HERE") && styles.buttonDisabled),
               marginTop: '16px',
               width: '100%',
             }}
           >
-            {loading ? (
+            {(loading || sponsorLoading) ? (
               <>
                 <span style={styles.loadingSpinner}></span>
-                <span style={{ marginLeft: '8px' }}>Minting...</span>
+                <span style={{ marginLeft: '8px' }}>
+                  {useGasless ? 'Processing (Gasless)...' : 'Minting...'}
+                </span>
               </>
             ) : !account ? (
               '🔗 Connect Wallet to Verify'
             ) : (
-              '✅ Verify on Sui Blockchain'
+              useGasless && sponsorStatus
+                ? '✅ Verify on Blockchain (Free!)'
+                : '✅ Verify on Blockchain (Requires SUI)'
             )}
           </button>
+          
+          {/* Sponsor Error Display */}
+          {sponsorError && useGasless && (
+            <div style={{ 
+              ...styles.errorBox, 
+              marginTop: '16px',
+              fontSize: '14px'
+            }}>
+              <p style={{ margin: 0, marginBottom: '8px' }}>
+                <strong>Gasless transaction error:</strong> {sponsorError}
+              </p>
+              <button
+                onClick={() => {
+                  setUseGasless(false);
+                  setError(null);
+                }}
+                style={{
+                  ...styles.button,
+                  fontSize: '14px',
+                  padding: '8px 16px',
+                  marginTop: '8px'
+                }}
+              >
+                Switch to Normal Mode
+              </button>
+            </div>
+          )}
 
           {/* Success Box with Transaction Hash */}
           {txHash && (
@@ -694,6 +928,17 @@ export function UploadView() {
           <p>{error}</p>
         </div>
       )}
+
+      {/* Gas Station Status Component */}
+      <GasStationStatus 
+        gasStationUrl={GAS_STATION_URL}
+        onStatusChange={(newStatus) => {
+          // Update local state if gas station goes offline
+          if (newStatus === 'offline' && useGasless) {
+            setUseGasless(false);
+          }
+        }}
+      />
     </div>
   );
 }
