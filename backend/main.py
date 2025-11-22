@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from io import BytesIO
 import pydicom
 from PIL import Image
@@ -9,6 +10,7 @@ import os
 import json
 import random
 import hashlib
+from datetime import datetime
 from dotenv import load_dotenv
 from atoma_sdk import AtomaSDK
 
@@ -65,6 +67,20 @@ VISION_MODELS = [
 ]
 
 app = FastAPI()
+
+# Add CORS middleware to allow frontend requests
+# This is essential for the frontend (running on localhost:3000) to communicate with backend (localhost:8000)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, use specific origins like ["http://localhost:3000"]
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all HTTP methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allow all headers
+)
+
+# In-memory storage for analyses (in production, use a database)
+# This stores recent analyses so the doctor dashboard can retrieve them
+analyses_storage = []
 
 
 def generate_demo_response(image_type=None):
@@ -376,6 +392,7 @@ async def analyze_image(file: UploadFile = File(...)):
     Analyze a medical image file using AtomaSDK.
     If the file is a DICOM (.dcm) file, it converts it to PNG.
     """
+    print(f"📥 Received analysis request: {file.filename} ({file.size or 'unknown'} bytes)")
     try:
         # Read the uploaded file
         contents = await file.read()
@@ -488,6 +505,20 @@ async def analyze_image(file: UploadFile = File(...)):
                             result_str = json.dumps(result, sort_keys=True)
                             result['hash'] = hashlib.sha256(result_str.encode()).hexdigest()
                             
+                            # Store analysis in memory for doctor dashboard
+                            analysis_record = {
+                                "id": len(analyses_storage) + 1,
+                                "timestamp": datetime.now().isoformat(),
+                                "patient_id": "anonymous",  # In production, get from auth
+                                "file_name": file.filename or "unknown.dcm",
+                                "result": result
+                            }
+                            analyses_storage.append(analysis_record)
+                            # Keep only last 100 analyses in memory
+                            if len(analyses_storage) > 100:
+                                analyses_storage.pop(0)
+                            print(f"📊 Analysis stored: {analysis_record['id']} - {result.get('status', 'Unknown')}")
+                            
                             return JSONResponse(
                                 content=result,
                                 status_code=200
@@ -571,6 +602,24 @@ async def analyze_image(file: UploadFile = File(...)):
                     # Other errors - log but continue with demo result
                     print(f"⚠️ Hallucination check warning: {error_msg}")
                 
+                # Generate hash for blockchain storage
+                result_str = json.dumps(demo_result, sort_keys=True)
+                demo_result['hash'] = hashlib.sha256(result_str.encode()).hexdigest()
+                
+                # Store analysis in memory for doctor dashboard
+                analysis_record = {
+                    "id": len(analyses_storage) + 1,
+                    "timestamp": datetime.now().isoformat(),
+                    "patient_id": "anonymous",  # In production, get from auth
+                    "file_name": file.filename or "unknown.dcm",
+                    "result": demo_result
+                }
+                analyses_storage.append(analysis_record)
+                # Keep only last 100 analyses in memory
+                if len(analyses_storage) > 100:
+                    analyses_storage.pop(0)
+                print(f"📊 Demo analysis stored: {analysis_record['id']} - {demo_result.get('status', 'Unknown')}")
+                
                 return JSONResponse(
                     content=demo_result,
                     status_code=200
@@ -626,5 +675,43 @@ async def get_status():
         "demo_mode": DEMO_MODE,
         "atoma_configured": atoma_bearer_auth is not None and atoma_bearer_auth != "",
         "version": "1.0.0"
+    }
+
+
+@app.get("/ping")
+async def ping():
+    """
+    Simple connection test endpoint.
+    Returns a pong message with timestamp to verify backend is accessible.
+    
+    Returns:
+        dict: Message and current timestamp
+    """
+    return {
+        "message": "pong",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.get("/analyses")
+async def get_analyses(limit: int = 50):
+    """
+    Get recent analyses for the doctor dashboard.
+    
+    This endpoint returns all recent analyses that have been performed.
+    In production, this would query a database and filter by doctor permissions.
+    
+    Args:
+        limit: Maximum number of analyses to return (default: 50)
+    
+    Returns:
+        dict: List of recent analyses with metadata
+    """
+    # Return recent analyses (most recent first)
+    recent = analyses_storage[-limit:] if len(analyses_storage) > limit else analyses_storage
+    return {
+        "total": len(analyses_storage),
+        "returned": len(recent),
+        "analyses": list(reversed(recent))  # Most recent first
     }
 

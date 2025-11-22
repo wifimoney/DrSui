@@ -160,12 +160,15 @@ export function UploadView() {
   const handleFileChange = (event) => {
     const selectedFile = event.target.files?.[0] || event.dataTransfer?.files?.[0];
     
+    console.log('📁 File selected:', selectedFile?.name, selectedFile?.size, 'bytes');
+    
     if (selectedFile) {
       setFile(selectedFile);
       // Clear previous results when new file is selected
       setAiResult(null);
       setTxHash(null);
       setError(null);
+      console.log('✅ File state updated');
     }
   };
 
@@ -182,6 +185,14 @@ export function UploadView() {
       return;
     }
 
+    console.log('🚀 Starting image analysis...');
+    console.log('📤 Upload URL:', `${BACKEND_URL}/analyze`);
+    console.log('📁 File details:', {
+      name: file.name,
+      size: file.size,
+      type: file.type
+    });
+
     // Set loading state to show spinner/loading indicator
     setLoading(true);
     setError(null);
@@ -191,27 +202,59 @@ export function UploadView() {
       // FormData is used for multipart/form-data file uploads
       const formData = new FormData();
       formData.append('file', file);
+      console.log('📦 FormData created with file');
 
       // POST request to backend analysis endpoint
       // Uses BACKEND_URL from environment variable (process.env.REACT_APP_BACKEND_URL)
       // The backend will process the DICOM file and return AI analysis results
+      console.log('📡 Sending POST request to backend...');
       const response = await fetch(`${BACKEND_URL}/analyze`, {
         method: 'POST',
         body: formData,
       });
 
+      console.log('📥 Response received:', {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries())
+      });
+
       // Check if request was successful
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ message: 'Analysis failed' }));
+        console.error('❌ Server error:', errorData);
         throw new Error(errorData.message || `Server error: ${response.status}`);
       }
 
       // Parse JSON response from backend
       const result = await response.json();
+      console.log('✅ Analysis complete:', result);
       
       // Store AI analysis results in state
       // Result should contain: findings, severity, confidence, hash, etc.
       setAiResult(result);
+      
+      // Save to localStorage for doctor dashboard
+      try {
+        const analyses = JSON.parse(localStorage.getItem('drsui_analyses') || '[]');
+        const newAnalysis = {
+          id: Date.now(),
+          timestamp: new Date().toISOString(),
+          patientId: account?.address || 'Anonymous',
+          fileName: file.name,
+          result: result,
+        };
+        analyses.unshift(newAnalysis); // Add to beginning
+        // Keep only last 50 analyses
+        const recentAnalyses = analyses.slice(0, 50);
+        localStorage.setItem('drsui_analyses', JSON.stringify(recentAnalyses));
+        console.log('💾 Analysis saved to localStorage');
+        
+        // Dispatch event to notify doctor dashboard
+        window.dispatchEvent(new CustomEvent('drsui_new_analysis', { detail: newAnalysis }));
+      } catch (storageErr) {
+        console.warn('⚠️ Failed to save to localStorage:', storageErr);
+      }
       
       // Record scan in analytics
       const severity = result.severity || (result.critical_alert ? 'HIGH' : 'NORMAL');
@@ -222,14 +265,23 @@ export function UploadView() {
       
     } catch (err) {
       // Handle errors gracefully with user-friendly messages
-      console.error('Analysis error:', err);
-      setError(
-        err.message || 
-        'Failed to analyze image. Please check that the backend server is running on port 8000.'
-      );
+      console.error('❌ Analysis error:', err);
+      
+      // Check for CORS errors
+      if (err.message.includes('Failed to fetch') || err.message.includes('CORS')) {
+        setError('Cannot connect to server - is the backend running? Check CORS settings.');
+      } else if (err.message.includes('NetworkError') || err.message.includes('network')) {
+        setError('Network error - please check your connection and that the backend is running on port 8000.');
+      } else {
+        setError(
+          err.message || 
+          'Failed to analyze image. Please check that the backend server is running on port 8000.'
+        );
+      }
     } finally {
       // Always set loading to false when done (success or error)
       setLoading(false);
+      console.log('🏁 Analysis process complete');
     }
   };
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Inbox, Users, Settings, ZoomIn, Contrast, Ruler, Lock, Unlock } from "lucide-react";
+import { Inbox, Users, Settings, ZoomIn, Contrast, Ruler, Lock, Unlock, Activity } from "lucide-react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
@@ -8,6 +8,7 @@ import { SettingsView } from "./doctor/SettingsView";
 import { AuditTrailWidget } from "./doctor/AuditTrailWidget";
 import { GhostAnnotationOverlay } from "./doctor/GhostAnnotationOverlay";
 import { RequestAccessToast } from "./doctor/RequestAccessToast";
+import { DoctorDashboard } from "./doctor/DoctorDashboard";
 import { useLanguage } from "./LanguageContext";
 
 export function DoctorPortal() {
@@ -146,6 +147,17 @@ export function DoctorPortal() {
             <span className="font-medium text-sm">{t("doctor.nav.inbox")}</span>
           </button>
           <button
+            onClick={() => setActiveNav("dashboard")}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+              activeNav === "dashboard"
+                ? "bg-primary/10 text-primary border border-primary/20"
+                : "hover:bg-sidebar-accent text-muted-foreground hover:text-sidebar-foreground"
+            }`}
+          >
+            <Activity className="size-5" />
+            <span className="font-medium text-sm">Recent Analyses</span>
+          </button>
+          <button
             onClick={() => setActiveNav("patients")}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
               activeNav === "patients"
@@ -175,7 +187,9 @@ export function DoctorPortal() {
       </aside>
 
       {/* Main Content Area */}
-      {activeNav === "patients" ? (
+      {activeNav === "dashboard" ? (
+        <DoctorDashboard />
+      ) : activeNav === "patients" ? (
         <PatientsView />
       ) : activeNav === "settings" ? (
         <SettingsView />
