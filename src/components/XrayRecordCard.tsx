@@ -76,6 +76,13 @@ export function XrayRecordCard({
   const [addressError, setAddressError] = useState<string | null>(null);
   const [isSharing, setIsSharing] = useState(false);
 
+  // Debug dialog state
+  useEffect(() => {
+    console.log('🔔 Dialog state changed:', showShareDialog);
+    console.log('🔔 isDoctorView:', isDoctorView);
+    console.log('🔔 onShareToggle exists:', !!onShareToggle);
+  }, [showShareDialog, isDoctorView, onShareToggle]);
+
   const currentAccount = useCurrentAccount();
   const client = new SuiJsonRpcClient({
     url: getFullnodeUrl('testnet'),
@@ -324,8 +331,10 @@ export function XrayRecordCard({
                     size="sm"
                     onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                       e.preventDefault();
-                      e.stopPropagation(); // Crucial to prevent parent click issues
-                      setShowShareDialog(true); // This triggers the dialog
+                      e.stopPropagation();
+                      console.log('🚀 Share button clicked! Setting dialog to true...');
+                      setShowShareDialog(true);
+                      console.log('🚀 showShareDialog should now be true');
                     }}
                     className="flex items-center gap-2"
                   >
@@ -340,20 +349,62 @@ export function XrayRecordCard({
       </div>
     </Card>
 
+    {/* Debug indicators */}
+    {showShareDialog && (
+      <>
+        <div style={{ 
+          position: 'fixed', 
+          top: 10, 
+          right: 10, 
+          background: 'red', 
+          color: 'white', 
+          padding: '10px',
+          zIndex: 99999,
+          borderRadius: '5px'
+        }}>
+          Dialog State: OPEN
+        </div>
+        
+        {/* Test overlay to verify z-index */}
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(255, 0, 0, 0.1)',
+          zIndex: 99997,
+          pointerEvents: 'none',
+        }} />
+      </>
+    )}
+
     {/* Share Dialog - Rendered outside Card to ensure proper portal rendering */}
-    {!isDoctorView && onShareToggle && (
-      <Dialog 
-        open={showShareDialog} 
-        onOpenChange={(open: boolean) => {
-          setShowShareDialog(open);
-          if (!open) {
-            setDoctorAddress("");
-            setAddressError(null);
-            setIsSharing(false);
-          }
+    <Dialog 
+      open={showShareDialog} 
+      onOpenChange={(open: boolean) => {
+        console.log('🔄 Dialog onOpenChange called with:', open);
+        setShowShareDialog(open);
+        if (!open) {
+          setDoctorAddress("");
+          setAddressError(null);
+          setIsSharing(false);
+        }
+      }}
+    >
+      <DialogContent 
+        className="sm:max-w-[500px]" 
+        style={{ 
+          zIndex: 99999,
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          backgroundColor: 'white',
+          padding: '24px',
+          borderRadius: '8px',
+          boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
+          maxWidth: '500px',
+          width: '90vw',
         }}
       >
-        <DialogContent className="sm:max-w-[500px]" style={{ zIndex: 9999 }}>
           <DialogHeader>
             <DialogTitle className="text-xl font-semibold flex items-center gap-2">
               <Share2 className="size-5 text-primary" />
@@ -443,8 +494,7 @@ export function XrayRecordCard({
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
-    )}
+    </Dialog>
   </>
   );
 }

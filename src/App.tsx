@@ -13,6 +13,7 @@ import { LanguageProvider, useLanguage } from "./components/LanguageContext";
 import { useCurrentAccount, ConnectModal } from "@mysten/dapp-kit";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { getFullnodeUrl } from "@mysten/sui/client";
+import { Toaster } from "./components/ui/sonner";
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState<"patient" | "upload" | "doctor">("patient");
@@ -324,6 +325,9 @@ function AppContent() {
       {showUploadModal && (
         <UploadModal onClose={() => setShowUploadModal(false)} />
       )}
+      
+      {/* Toast Notifications */}
+      <Toaster />
     </div>
   );
 }
