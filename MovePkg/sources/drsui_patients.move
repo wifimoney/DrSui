@@ -29,7 +29,10 @@ module drsui::patient {
         duration: u64
     }
 
-    public struct ValidateRequest {}
+    public struct ValidateRequest {
+        id: ID
+    }
+
     fun init(ctx: &mut TxContext) {
         let r = PatientRegistry{
             id: object::new(ctx),
@@ -48,7 +51,7 @@ module drsui::patient {
     }
 
     public(package) fun destroy_request(self: ValidateRequest) {
-        let ValidateRequest {} = self;
+        let ValidateRequest { id } = self;
     }
 
     public fun audit_data(self: &mut PatientRegistry, x_ray: &mut XRayImages, body_part: String, blob: Blob, ctx: &mut TxContext) {
@@ -94,11 +97,15 @@ module drsui::patient {
         request.duration
     }
 
+    public fun validation_id(self: &ValidateRequest): ID {
+        self.id
+    }
     public fun request_access_a_day(clock: &Clock, x_ray: &XRayImages, ctx: &mut TxContext): ValidateRequest {
         let request_proposal = mint_request(clock, x_ray.id.to_inner(), 86_400_000, ctx);
+        let validate_request = ValidateRequest { id: *&request_proposal.id.to_inner() };
         transfer::freeze_object(request_proposal); // will consider who will get access
-        let validate_request = ValidateRequest {};
         validate_request
+        
     }
 
     public fun request_access_a_hour(clock: &Clock, x_ray: &XRayImages, ctx: &mut TxContext) {

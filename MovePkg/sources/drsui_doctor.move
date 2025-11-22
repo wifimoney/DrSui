@@ -11,6 +11,7 @@ module drsui::doctor {
     public struct DoctorRegistry has key, store {
         id: UID,
         doctor_requests: Table<address, vector<ID>>,
+        doctor_caps: Table<address, ID>,
         doctor_list: vector<address>
     }
 
@@ -23,6 +24,7 @@ module drsui::doctor {
         let registry = DoctorRegistry {
             id: object::new(ctx),
             doctor_requests: table::new<address, vector<ID>>(ctx),
+            doctor_caps: table::new<address, ID>(ctx),
             doctor_list: vector::empty<address>()
         };
         transfer::share_object(registry);
@@ -45,19 +47,21 @@ module drsui::doctor {
     #[allow(lint(self_transfer))]
     public fun registration(registry: &mut DoctorRegistry, ctx: &mut TxContext) {
         // might add KYC when registering
-        assert!(registry.doctor_list.contains(&ctx.sender()), 0);
+        assert!(!registry.doctor_list.contains(&ctx.sender()), 0);
         let doctor_cap = mint_doctor_cap(ctx);
         let doctor_img = mint_doctor_image_bank(ctx);
         registry.doctor_list.push_back(ctx.sender());
+        registry.doctor_caps.add(ctx.sender(), doctor_cap.id.to_inner());
         transfer::public_transfer(doctor_cap, ctx.sender());
         transfer::public_transfer(doctor_img, ctx.sender());
     }
 
     public fun add_doctor_request(self: &mut DoctorRegistry, request: &XRayImages, validation: ValidateRequest, doctor: address, ctx: &mut TxContext) {
-        if(self.doctor_requests.contains(ctx.sender())){
-            self.doctor_requests.borrow_mut(ctx.sender()).push_back(request.x_ray_data());
+
+        if(self.doctor_requests.contains(doctor)){
+            self.doctor_requests.borrow_mut(doctor).push_back(validation.validation_id());
         } else {
-            self.doctor_requests.add(ctx.sender(), vector::singleton(request.x_ray_data()));
+            self.doctor_requests.add(doctor, vector::singleton(validation.validation_id()));
         };
         validation.destroy_request();
     }
