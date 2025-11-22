@@ -1,0 +1,27 @@
+{
+  "name": "drsui",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wifimoney/DrSui.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/wifimoney/DrSui/issues"
+  },
+  "homepage": "https://github.com/wifimoney/DrSui#readme",
+  "dependencies": {
+    "@mysten/seal": "^0.9.4",
+    "@mysten/sui": "^1.45.0",
+    "@types/node": "^24.10.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
