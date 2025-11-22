@@ -7,7 +7,7 @@ module drsui::patient {
     /// owned by the patient and uploaded/attested by a hospital.
     public struct PatientRegistry has key {
         id: UID,
-        registry: Table<address, XRayImages>
+        registry: Table<address, ID>
     }
 
     public struct XRayImages has key, store {
@@ -32,7 +32,7 @@ module drsui::patient {
     fun init(ctx: &mut TxContext) {
         let r = PatientRegistry{
             id: object::new(ctx),
-            registry: table::new<address, XRayImages>(ctx)
+            registry: table::new<address, ID>(ctx)
         };
         transfer::share_object(r)
     }
@@ -47,25 +47,21 @@ module drsui::patient {
     }
 
     public fun upload_data_from_patient(self: &mut PatientRegistry, doctor: address, blob: Blob, body_part: String, ctx: &mut TxContext) {
+        let x_ray = XRayImages {
+            id: object::new(ctx),
+            patient: ctx.sender(),
+            uploader: vector::singleton(doctor),
+            blob: vector::singleton(blob),
+            body_parts: vector::singleton<String>(body_part)
+        };
         if (self.registry.contains(ctx.sender())){
             let current_data = self.registry.borrow_mut(ctx.sender());
-            current_data.uploader.push_back(doctor);
-            let old_blob = current_data.blob.pop_back();
-            old_blob.burn();
-            current_data.blob.push_back(blob);
-            current_data.body_parts.push_back(body_part);
-            
+            *current_data = *&x_ray.id.to_inner();
         }
         else{
-            let x_ray = XRayImages {
-                id: object::new(ctx),
-                patient: ctx.sender(),
-                uploader: vector::singleton(doctor),
-                blob: vector::singleton(blob),
-                body_parts: vector::singleton<String>(body_part)
-            };
-            self.registry.add(ctx.sender(), x_ray)
-        }
+            self.registry.add(ctx.sender(), *&x_ray.id.to_inner());
+        };
+        transfer::share_object(x_ray);
     }
     public fun get_patient(self: &XRayImages): address {
         self.patient

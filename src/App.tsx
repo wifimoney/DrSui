@@ -28,6 +28,7 @@ function AppContent() {
   // X-ray records from chain
   const [xrayRecords, setXrayRecords] = useState<Array<{
     id: string;
+    blobId?: string;
     title: string;
     date: string;
     isShared: boolean;
@@ -36,6 +37,7 @@ function AppContent() {
 
   // Fetch patient records from blockchain
   useEffect(() => {
+    console.log("useEffect called in AppContent");
     const fetchPatientRecords = async () => {
       if (!account?.address || !patient_registry) return;
 
@@ -47,9 +49,9 @@ function AppContent() {
             showContent: true,
           },
         });
-
+        console.log('Patient registry data:', data);
         const registryId = (data as any)?.data?.content?.fields?.registry?.fields?.id?.id;
-        
+        console.log('Registry ID:', registryId);
         if (registryId) {
           const owned = await client.getDynamicFieldObject({
             parentId: registryId,
@@ -58,17 +60,40 @@ function AppContent() {
               value: account.address,
             },
           });
+          console.log('Owned:', owned);
+          const ownedId = (owned as any)?.data?.content?.fields?.value;
+          const objectData = await client.getObject({
+            id: ownedId,
+            options: {
+              showContent: true,
+            },
+          });
+          console.log('Object data:', objectData);
+          const recordFields = (objectData as any)?.data?.content?.fields;
 
-          const recordFields = (owned as any)?.data?.content?.fields?.value?.fields;
-          
+          console.log('Record fields:', recordFields);
           if (recordFields) {
+
             const blobs = recordFields.blob || [];
             const bodyParts = recordFields.body_parts || [];
-
+            console.log('Blobs:', blobs);
+            console.log('Body parts:', bodyParts);
             // Create records based on body_parts array length
             const records = bodyParts.map((bodyPart: string, index: number) => {
               const blob = blobs[index];
-              const blobId = blob?.id?.id || blob?.objectId || `BLOB-${index}`;
+              console.log('Blob:', blob);
+              
+              // Extract blob_id from the blob structure
+              // Blob structure: { fields: { blob_id: "...", id: { id: "..." } } }
+              const blobId = blob?.fields?.blob_id || 
+                            blob?.fields?.id?.id || 
+                            blob?.id?.id || 
+                            blob?.objectId || 
+                            `BLOB-${index}`;
+              const blobObjectId = blob?.fields?.id?.id || blob?.id?.id || blobId;
+              
+              console.log('Blob ID (blob_id):', blobId);
+              console.log('Blob Object ID:', blobObjectId);
               
               // Format date (you might want to get this from blob metadata if available)
               const date = new Date().toLocaleDateString('en-US', { 
@@ -77,9 +102,15 @@ function AppContent() {
                 day: 'numeric' 
               });
 
+              // Capitalize body part properly
+              const bodyPartCapitalized = bodyPart 
+                ? bodyPart.charAt(0).toUpperCase() + bodyPart.slice(1).toLowerCase()
+                : 'Unknown';
+
               return {
-                id: blobId,
-                title: `${bodyPart.charAt(0).toUpperCase() + bodyPart.slice(1)} X-Ray`,
+                id: blobObjectId, // Use object ID for the record ID
+                blobId: blobId, // Store blob_id separately if needed
+                title: `${bodyPartCapitalized} X-Ray`,
                 date: date,
                 isShared: false, // You might want to check this from chain data
               };
@@ -221,7 +252,7 @@ function AppContent() {
                   </div>
                 ) : (
                   <>
-                    {xrayRecords.map((record: typeof xrayRecords[0]) => (
+                    {xrayRecords.map((record: typeof xrayRecords[0], index: number) => (
                       <XrayRecordCard
                         key={record.id}
                         id={record.id}
@@ -229,6 +260,7 @@ function AppContent() {
                         date={record.date}
                         isShared={record.isShared}
                         onShareToggle={(newState) => handleShareToggle(record.id, newState)}
+                        index={index}
                       />
                     ))}
                   </>
