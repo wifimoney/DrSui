@@ -1,16 +1,14 @@
 import { useState, useEffect } from "react";
-import { FileText, Database, Share2, Users, Upload, Wallet, Lock } from "lucide-react";
+import { FileText, Database, Users, Upload, Wallet, Lock } from "lucide-react";
 import { Button } from "./components/ui/button";
-import { Badge } from "./components/ui/badge";
 import { Card } from "./components/ui/card";
 import { StatCard } from "./components/StatCard";
-import { MedicalFileCard } from "./components/MedicalFileCard";
 import { XrayRecordCard } from "./components/XrayRecordCard";
 import { Navigation } from "./components/Navigation";
 import { UploadModal } from "./components/UploadModal";
 import { DoctorPortal } from "./components/DoctorPortal";
 import NetworkLogos from "./imports/NetworkLogos";
-import walrusLogo from "figma:asset/0d79301d3b94cfc4f3db4e1ffc0849c9831d8154.png";
+import walrusLogo from "./assets/0d79301d3b94cfc4f3db4e1ffc0849c9831d8154.png";
 import { LanguageProvider, useLanguage } from "./components/LanguageContext";
 import { useCurrentAccount, ConnectModal } from "@mysten/dapp-kit";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
@@ -19,7 +17,7 @@ import { getFullnodeUrl } from "@mysten/sui/client";
 function AppContent() {
   const [currentPage, setCurrentPage] = useState<"patient" | "upload" | "doctor">("patient");
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const { language, setLanguage, t } = useLanguage();
+  const { t } = useLanguage();
   const account = useCurrentAccount();
   const patient_registry = import.meta.env.VITE_PATIENT_REGISTRY;
   const client = new SuiJsonRpcClient({
@@ -66,13 +64,11 @@ function AppContent() {
           if (recordFields) {
             const blobs = recordFields.blob || [];
             const bodyParts = recordFields.body_parts || [];
-            const uploaders = recordFields.uploader || [];
 
             // Create records based on body_parts array length
             const records = bodyParts.map((bodyPart: string, index: number) => {
               const blob = blobs[index];
               const blobId = blob?.id?.id || blob?.objectId || `BLOB-${index}`;
-              const uploader = uploaders[index] || uploaders[0] || '';
               
               // Format date (you might want to get this from blob metadata if available)
               const date = new Date().toLocaleDateString('en-US', { 
@@ -116,14 +112,9 @@ function AppContent() {
     }
   };
 
-  const handleDecrypt = (id: string) => {
-    console.log(`Decrypting record ${id}...`);
-    // Logic to fetch encrypted key and decrypt content would go here
-  };
-
   const handleShareToggle = (id: string, newState: boolean) => {
-    setXrayRecords(prev => 
-      prev.map(record => 
+    setXrayRecords((prev: typeof xrayRecords) => 
+      prev.map((record: typeof xrayRecords[0]) => 
         record.id === id ? { ...record, isShared: newState } : record
       )
     );
@@ -207,7 +198,7 @@ function AppContent() {
                 <StatCard
                   icon={<Users className="size-6 text-primary" />}
                   label={t("patient.activeShares")}
-                  value={xrayRecords.filter(r => r.isShared).length.toString()}
+                  value={xrayRecords.filter((r: typeof xrayRecords[0]) => r.isShared).length.toString()}
                 />
               </div>
 
@@ -229,16 +220,18 @@ function AppContent() {
                     No records found. Upload your first X-ray to get started.
                   </div>
                 ) : (
-                  xrayRecords.map((record) => (
-                    <XrayRecordCard
-                      key={record.id}
-                      id={record.id}
-                      title={record.title}
-                      date={record.date}
-                      isShared={record.isShared}
-                      onShareToggle={(newState) => handleShareToggle(record.id, newState)}
-                    />
-                  ))
+                  <>
+                    {xrayRecords.map((record: typeof xrayRecords[0]) => (
+                      <XrayRecordCard
+                        key={record.id}
+                        id={record.id}
+                        title={record.title}
+                        date={record.date}
+                        isShared={record.isShared}
+                        onShareToggle={(newState) => handleShareToggle(record.id, newState)}
+                      />
+                    ))}
+                  </>
                 )}
               </div>
             </main>
