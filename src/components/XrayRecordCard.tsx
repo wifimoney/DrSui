@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Eye, Share2, Lock, Unlock, FileText, Loader2 } from "lucide-react";
+import { Eye, Share2, Lock, Unlock, FileText, Loader2, X } from "lucide-react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -16,7 +16,7 @@ import {
 import { fromHex } from "@mysten/sui/utils";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { PermissionSwitch } from "./patient/PermissionSwitch";
-import { useCurrentAccount, useSignPersonalMessage, useSuiClient } from "@mysten/dapp-kit";
+import { useCurrentAccount, useSignPersonalMessage, useSuiClient, useSignAndExecuteTransaction } from "@mysten/dapp-kit";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
 import { blobIdFromInt } from "@mysten/walrus";
@@ -44,6 +44,7 @@ export function XrayRecordCard({
   index = 0
 }: XrayRecordCardProps) {
   const patient_registry = import.meta.env.VITE_PATIENT_REGISTRY;
+  const doctor_registry = import.meta.env.VITE_DOCTOR_REGISTRY;
   const package_id = import.meta.env.VITE_PACKAGE_ID;
   
   // Seal server configuration
@@ -63,6 +64,7 @@ export function XrayRecordCard({
   });
 
   const { mutateAsync: signPersonalMessage } = useSignPersonalMessage();
+  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
   const [isDecrypted, setIsDecrypted] = useState(false);
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -76,12 +78,6 @@ export function XrayRecordCard({
   const [addressError, setAddressError] = useState<string | null>(null);
   const [isSharing, setIsSharing] = useState(false);
 
-  // Debug dialog state
-  useEffect(() => {
-    console.log('🔔 Dialog state changed:', showShareDialog);
-    console.log('🔔 isDoctorView:', isDoctorView);
-    console.log('🔔 onShareToggle exists:', !!onShareToggle);
-  }, [showShareDialog, isDoctorView, onShareToggle]);
 
   const currentAccount = useCurrentAccount();
   const client = new SuiJsonRpcClient({
@@ -332,9 +328,7 @@ export function XrayRecordCard({
                     onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      console.log('🚀 Share button clicked! Setting dialog to true...');
                       setShowShareDialog(true);
-                      console.log('🚀 showShareDialog should now be true');
                     }}
                     className="flex items-center gap-2"
                   >
@@ -349,38 +343,10 @@ export function XrayRecordCard({
       </div>
     </Card>
 
-    {/* Debug indicators */}
-    {showShareDialog && (
-      <>
-        <div style={{ 
-          position: 'fixed', 
-          top: 10, 
-          right: 10, 
-          background: 'red', 
-          color: 'white', 
-          padding: '10px',
-          zIndex: 99999,
-          borderRadius: '5px'
-        }}>
-          Dialog State: OPEN
-        </div>
-        
-        {/* Test overlay to verify z-index */}
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          backgroundColor: 'rgba(255, 0, 0, 0.1)',
-          zIndex: 99997,
-          pointerEvents: 'none',
-        }} />
-      </>
-    )}
-
-    {/* Share Dialog - Rendered outside Card to ensure proper portal rendering */}
+    {/* Share Dialog - Compact Design */}
     <Dialog 
       open={showShareDialog} 
       onOpenChange={(open: boolean) => {
-        console.log('🔄 Dialog onOpenChange called with:', open);
         setShowShareDialog(open);
         if (!open) {
           setDoctorAddress("");
@@ -389,111 +355,197 @@ export function XrayRecordCard({
         }
       }}
     >
-      <DialogContent 
-        className="sm:max-w-[500px]" 
-        style={{ 
-          zIndex: 99999,
-          position: 'fixed',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          backgroundColor: 'white',
-          padding: '24px',
-          borderRadius: '8px',
-          boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
-          maxWidth: '500px',
-          width: '90vw',
-        }}
-      >
-          <DialogHeader>
-            <DialogTitle className="text-xl font-semibold flex items-center gap-2">
-              <Share2 className="size-5 text-primary" />
-              Share Record with Doctor
-            </DialogTitle>
-            <DialogDescription className="text-sm text-muted-foreground mt-2">
-              Enter the doctor's Sui wallet address to grant them access to this X-ray record.
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-3">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="doctor-address" className="text-sm font-medium">
-                  Doctor's Wallet Address
-                </Label>
-                <span className="text-xs text-muted-foreground">Required</span>
-              </div>
-              <Input
-                id="doctor-address"
-                placeholder="0x..."
-                value={doctorAddress}
-                onChange={(e) => {
-                  setDoctorAddress(e.target.value);
-                  setAddressError(null);
-                }}
-                className={`font-mono text-sm ${addressError ? "border-destructive focus-visible:ring-destructive" : ""}`}
-                disabled={isSharing}
-                autoFocus
-              />
-              {addressError && (
-                <div className="p-3 rounded-md bg-destructive/10 border border-destructive/20">
-                  <p className="text-sm text-destructive">{addressError}</p>
-                </div>
-              )}
+      <DialogContent className="max-w-[420px] w-[90vw] p-6 gap-4">
+        <DialogHeader className="space-y-1.5 pr-8">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 bg-primary/10 rounded-lg">
+              <Share2 className="size-4 text-primary" />
             </div>
+            <DialogTitle className="text-lg font-semibold">
+              Share with Doctor
+            </DialogTitle>
           </div>
-
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              variant="outline"
-              onClick={() => setShowShareDialog(false)}
-              disabled={isSharing}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={async () => {
-                const addressRegex = /^0x[a-fA-F0-9]{64}$/;
-                const trimmedAddress = doctorAddress.trim();
-                
-                if (!trimmedAddress) {
-                  setAddressError("Please enter an address");
-                  return;
-                }
-                if (!addressRegex.test(trimmedAddress)) {
-                  setAddressError("Invalid Sui address format");
-                  return;
-                }
-                
-                setIsSharing(true);
-                try {
-                  await onShareToggle?.(true, trimmedAddress);
-                  setShowShareDialog(false);
-                  setDoctorAddress("");
-                  setAddressError(null);
-                  toast.success("Record shared successfully!");
-                } catch (error) {
-                  setAddressError(String(error));
-                } finally {
-                  setIsSharing(false);
-                }
+          <DialogDescription className="text-xs text-muted-foreground pl-9">
+            Enter doctor's Sui wallet address to grant access
+          </DialogDescription>
+        </DialogHeader>
+        
+        <div className="space-y-3 py-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="doctor-address" className="text-xs font-medium">
+              Wallet Address <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="doctor-address"
+              placeholder="0x..."
+              value={doctorAddress}
+              onChange={(e) => {
+                setDoctorAddress(e.target.value);
+                setAddressError(null);
               }}
+              className={`font-mono text-xs h-9 ${addressError ? "border-destructive" : ""}`}
               disabled={isSharing}
-            >
-              {isSharing ? (
-                <>
-                  <Loader2 className="mr-2 size-4 animate-spin" />
-                  Sharing...
-                </>
-              ) : (
-                <>
-                  <Share2 className="mr-2 size-4" />
-                  Share
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
+              autoFocus
+            />
+          </div>
+          
+          {addressError && (
+            <div className="flex items-start gap-2 p-2 rounded-md bg-destructive/10 border border-destructive/20 animate-in slide-in-from-top-1 duration-150">
+              <X className="size-3.5 text-destructive mt-0.5 shrink-0" />
+              <p className="text-xs text-destructive">{addressError}</p>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2 sm:gap-2 pt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowShareDialog(false)}
+            disabled={isSharing}
+            className="h-9"
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={async () => {
+              const addressRegex = /^0x[a-fA-F0-9]{64}$/;
+              const trimmedAddress = doctorAddress.trim();
+              
+              if (!trimmedAddress) {
+                setAddressError("Please enter address");
+                return;
+              }
+              if (!addressRegex.test(trimmedAddress)) {
+                setAddressError("Invalid format (0x + 64 hex)");
+                return;
+              }
+              
+              setIsSharing(true);
+              try {
+                // Step 1: Get the XRayImages object ID for this patient
+                toast.loading('Fetching patient record...');
+                
+                if (!currentAccount?.address) {
+                  throw new Error("No wallet connected");
+                }
+                
+                if (!patient_registry) {
+                  throw new Error("Patient registry not configured");
+                }
+                
+                const registryData = await client.getObject({
+                  id: patient_registry,
+                  options: { showContent: true },
+                });
+                
+                const registryId = (registryData as any)?.data?.content?.fields?.registry?.fields?.id?.id;
+                if (!registryId) {
+                  throw new Error("Patient registry not found");
+                }
+                
+                const owned = await client.getDynamicFieldObject({
+                  parentId: registryId,
+                  name: {
+                    type: 'address',
+                    value: currentAccount.address,
+                  },
+                });
+                
+                const ownedId = (owned as any)?.data?.content?.fields?.value;
+                console.log('ownedId', ownedId);
+                if (!ownedId) {
+                  throw new Error("No patient record found");
+                }
+                
+                if (!doctor_registry) {
+                  throw new Error("Doctor registry not configured");
+                }
+                
+                // Step 2: Create access request transaction
+                toast.dismiss();
+                toast.loading('Creating access request for doctor...');
+                
+                const tx = new Transaction();
+                
+                // Get Sui Clock object (shared object at 0x6)
+                const clockObjectId = '0x6';
+                
+                // Call request_access_a_day which returns a ValidateRequest object
+                const [validateRequest] = tx.moveCall({
+                  target: `${package_id}::patient::request_access_a_day`,
+                  arguments: [
+                    tx.object(clockObjectId),  // Clock
+                    tx.object(ownedId)         // XRayImages object
+                  ]
+                });
+                
+                // Call add_doctor_request to link the request to the specific doctor
+                tx.moveCall({
+                  target: `${package_id}::doctor::add_doctor_request`,
+                  arguments: [
+                    tx.object(doctor_registry),     // DoctorRegistry
+                    tx.object(ownedId),            // XRayImages reference
+                    validateRequest,                // ValidateRequest from previous call
+                    tx.pure.address(trimmedAddress) // Doctor's address
+                  ]
+                });
+                
+                // Execute the transaction
+                toast.dismiss();
+                toast.loading('Submitting to blockchain...');
+                
+                const result = await signAndExecuteTransaction({
+                  transaction: tx
+                });
+                
+                console.log('Access granted to doctor:', result);
+                
+                // Step 3: Update local state
+                if (onShareToggle) {
+                  await onShareToggle(true, trimmedAddress);
+                }
+                
+                toast.dismiss();
+                setShowShareDialog(false);
+                setDoctorAddress("");
+                setAddressError(null);
+                
+                toast.success("Access granted!", {
+                  description: `Doctor ${trimmedAddress.slice(0, 6)}...${trimmedAddress.slice(-4)} can access your record for 24 hours`,
+                  duration: 5000,
+                });
+              } catch (error) {
+                toast.dismiss();
+                console.error("Share error:", error);
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                setAddressError(errorMessage);
+                toast.error("Failed to grant access", { 
+                  description: errorMessage,
+                  duration: 5000 
+                });
+              } finally {
+                setIsSharing(false);
+              }
+            }}
+            disabled={isSharing}
+            className="h-9 min-w-[90px]"
+          >
+            {isSharing ? (
+              <>
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                Sharing...
+              </>
+            ) : (
+              <>
+                <Share2 className="mr-1.5 size-3.5" />
+                Share
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
     </Dialog>
   </>
   );

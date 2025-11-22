@@ -24,11 +24,12 @@ module drsui::patient {
 
     public struct RequestProposal has key, store {
         id: UID,
-        x_ray_data: XRayImages,
+        x_ray_data: ID,
         time: u64,
         duration: u64
     }
 
+    public struct ValidateRequest {}
     fun init(ctx: &mut TxContext) {
         let r = PatientRegistry{
             id: object::new(ctx),
@@ -37,7 +38,7 @@ module drsui::patient {
         transfer::share_object(r)
     }
 
-    fun mint_request(clock: &Clock, x_ray: XRayImages, duration: u64, ctx: &mut TxContext): RequestProposal {
+    fun mint_request(clock: &Clock, x_ray: ID, duration: u64, ctx: &mut TxContext): RequestProposal {
         RequestProposal {
             id: object::new(ctx),
             x_ray_data: x_ray,
@@ -45,6 +46,11 @@ module drsui::patient {
             duration
         }
     }
+
+    public(package) fun destroy_request(self: ValidateRequest) {
+        let ValidateRequest {} = self;
+    }
+
     public fun audit_data(self: &mut PatientRegistry, x_ray: &mut XRayImages, body_part: String, blob: Blob, ctx: &mut TxContext) {
         assert!(self.registry.contains(ctx.sender()), 0);
         let x_ray_id = self.registry.borrow_mut(ctx.sender());
@@ -53,6 +59,7 @@ module drsui::patient {
         x_ray.blob.push_back(blob);
         x_ray.body_parts.push_back(body_part);
     }
+
     public fun upload_data_from_patient(self: &mut PatientRegistry, doctor: address, blob: Blob, body_part: String, ctx: &mut TxContext) {
         assert!(!self.registry.contains(ctx.sender()), 0);
         let x_ray = XRayImages {
@@ -64,6 +71,9 @@ module drsui::patient {
         };
         self.registry.add(ctx.sender(), *&x_ray.id.to_inner());
         transfer::share_object(x_ray);
+    }
+    public fun x_ray_data(self: &XRayImages): ID {
+        self.id.to_inner()
     }
     public fun get_patient(self: &XRayImages): address {
         self.patient
@@ -84,13 +94,15 @@ module drsui::patient {
         request.duration
     }
 
-    public fun request_access_a_day(clock: &Clock, x_ray: XRayImages, ctx: &mut TxContext) {
-        let request_proposal = mint_request(clock, x_ray, 86_400_000, ctx);
-        transfer::freeze_object(request_proposal) // will consider who will get access
+    public fun request_access_a_day(clock: &Clock, x_ray: &XRayImages, ctx: &mut TxContext): ValidateRequest {
+        let request_proposal = mint_request(clock, x_ray.id.to_inner(), 86_400_000, ctx);
+        transfer::freeze_object(request_proposal); // will consider who will get access
+        let validate_request = ValidateRequest {};
+        validate_request
     }
 
-    public fun request_access_a_hour(clock: &Clock, x_ray: XRayImages, ctx: &mut TxContext) {
-        let request_proposal = mint_request(clock, x_ray, 3_600_000, ctx);
+    public fun request_access_a_hour(clock: &Clock, x_ray: &XRayImages, ctx: &mut TxContext) {
+        let request_proposal = mint_request(clock, x_ray.id.to_inner(), 3_600_000, ctx);
         transfer::freeze_object(request_proposal) // will consider who will get access
     }
 }
