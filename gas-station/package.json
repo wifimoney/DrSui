@@ -1,0 +1,26 @@
+{
+  "name": "gas-station",
+  "version": "1.0.0",
+  "description": "Gas station service for sponsoring Sui blockchain transactions",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "sui",
+    "blockchain",
+    "gas-station",
+    "sponsor",
+    "transactions"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@mysten/sui": "^1.45.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0"
+  }
+}
