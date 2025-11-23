@@ -16,13 +16,14 @@ import {
 import { fromHex } from "@mysten/sui/utils";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { PermissionSwitch } from "./patient/PermissionSwitch";
-import { useCurrentAccount, useSignPersonalMessage, useSuiClient, useSignAndExecuteTransaction } from "@mysten/dapp-kit";
+import { useCurrentAccount, useSignPersonalMessage, useSuiClient, useSignAndExecuteTransaction, useSignTransaction } from "@mysten/dapp-kit";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
 import { blobIdFromInt } from "@mysten/walrus";
 import { SealClient, SessionKey } from "@mysten/seal";
 import { Transaction } from "@mysten/sui/transactions";
 import { toast } from 'sonner';
+import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 
 interface XrayRecordCardProps {
   id: string;
@@ -46,7 +47,11 @@ export function XrayRecordCard({
   const patient_registry = import.meta.env.VITE_PATIENT_REGISTRY;
   const doctor_registry = import.meta.env.VITE_DOCTOR_REGISTRY;
   const package_id = import.meta.env.VITE_PACKAGE_ID;
-  
+  const sponsorAddress = import.meta.env.VITE_SPONSOR_ACCOUNT; //
+  const sponsor_priv = import.meta.env.VITE_SPONSOR_ACCOUNT_PRIV; //
+  const sponsorKeypair = Ed25519Keypair.fromSecretKey(sponsor_priv);
+  const account = useCurrentAccount();
+  const { mutateAsync: signTransaction } = useSignTransaction();
   // Seal server configuration
   const serverObjectIds = [
     "0x164ac3d2b3b8694b8181c13f671950004765c23f270321a45fdd04d40cccf0f2", 
@@ -287,27 +292,31 @@ export function XrayRecordCard({
             </p>
           </div>
 
-          <div className="mt-6 flex items-center justify-between gap-4">
+          <div className="mt-6 flex items-center justify-between gap-3 flex-wrap">
             <Button 
               variant={isDecrypted ? "secondary" : "default"}
-              className={!isDecrypted ? "bg-primary hover:bg-primary-hover shadow-glow w-40" : "w-40"}
+              className={!isDecrypted ? "bg-primary hover:bg-primary/90 text-primary-foreground shadow-glow" : ""}
+              size="sm"
               onClick={handleDecrypt}
               disabled={isDecrypted || isDecrypting}
             >
               {isDecrypting ? (
                 <>
                   <Loader2 className="mr-2 size-4 animate-spin" />
-                  Decrypting...
+                  <span className="hidden sm:inline">Decrypting...</span>
+                  <span className="sm:hidden">Decrypting</span>
                 </>
               ) : isDecrypted ? (
                 <>
                   <Unlock className="mr-2 size-4" />
-                  View X-ray
+                  <span className="hidden sm:inline">View X-ray</span>
+                  <span className="sm:hidden">View</span>
                 </>
               ) : (
                 <>
                   <Eye className="mr-2 size-4" />
-                  Decrypt & View
+                  <span className="hidden sm:inline">Decrypt & View</span>
+                  <span className="sm:hidden">Decrypt</span>
                 </>
               )}
             </Button>
@@ -317,8 +326,6 @@ export function XrayRecordCard({
               <div className="flex items-center">
                 {isShared ? (
                   <PermissionSwitch 
-                    isShared={isShared}
-                    onToggle={(checked) => onShareToggle(checked)}
                     onRevoke={() => onShareToggle(false)}
                   />
                 ) : (
@@ -330,10 +337,11 @@ export function XrayRecordCard({
                       e.stopPropagation();
                       setShowShareDialog(true);
                     }}
-                    className="flex items-center gap-2"
+                    className="flex items-center gap-2 border-primary/20 text-primary hover:bg-primary/5 hover:border-primary/40 hover:text-primary transition-all duration-200 shadow-sm hover:shadow-md"
                   >
                     <Share2 className="size-4" />
-                    <span>Share with Doctor</span>
+                    <span className="hidden sm:inline font-medium">Share with Doctor</span>
+                    <span className="sm:hidden font-medium">Share</span>
                   </Button>
                 )}
               </div>
@@ -343,7 +351,7 @@ export function XrayRecordCard({
       </div>
     </Card>
 
-    {/* Share Dialog - Compact Design */}
+    {/* Share Dialog - Optimized Design */}
     <Dialog 
       open={showShareDialog} 
       onOpenChange={(open: boolean) => {
@@ -355,22 +363,22 @@ export function XrayRecordCard({
         }
       }}
     >
-      <DialogContent className="max-w-[420px] w-[90vw] p-6 gap-4">
-        <DialogHeader className="space-y-1.5 pr-8">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 bg-primary/10 rounded-lg">
+      <DialogContent className="max-w-[400px] w-[90vw] p-5 gap-4 sm:p-6 relative">
+        <DialogHeader className="space-y-1.5 pr-12">
+          <div className="flex items-center gap-2.5 pr-2">
+            <div className="p-1.5 bg-primary/10 rounded-lg flex-shrink-0">
               <Share2 className="size-4 text-primary" />
             </div>
-            <DialogTitle className="text-lg font-semibold">
+            <DialogTitle className="text-base font-semibold sm:text-lg flex-1">
               Share with Doctor
             </DialogTitle>
           </div>
-          <DialogDescription className="text-xs text-muted-foreground pl-9">
+          <DialogDescription className="text-xs text-muted-foreground pl-8">
             Enter doctor's Sui wallet address to grant access
           </DialogDescription>
         </DialogHeader>
         
-        <div className="space-y-3 py-3">
+        <div className="space-y-3 py-2">
           <div className="space-y-1.5">
             <Label htmlFor="doctor-address" className="text-xs font-medium">
               Wallet Address <span className="text-destructive">*</span>
@@ -383,27 +391,27 @@ export function XrayRecordCard({
                 setDoctorAddress(e.target.value);
                 setAddressError(null);
               }}
-              className={`font-mono text-xs h-9 ${addressError ? "border-destructive" : ""}`}
+              className={`font-mono text-xs h-9 ${addressError ? "border-destructive focus-visible:ring-destructive" : ""}`}
               disabled={isSharing}
               autoFocus
             />
           </div>
           
           {addressError && (
-            <div className="flex items-start gap-2 p-2 rounded-md bg-destructive/10 border border-destructive/20 animate-in slide-in-from-top-1 duration-150">
+            <div className="flex items-start gap-2 p-2.5 rounded-md bg-destructive/10 border border-destructive/20 animate-in slide-in-from-top-1 duration-150">
               <X className="size-3.5 text-destructive mt-0.5 shrink-0" />
-              <p className="text-xs text-destructive">{addressError}</p>
+              <p className="text-xs text-destructive leading-relaxed">{addressError}</p>
             </div>
           )}
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-2 pt-2">
+        <DialogFooter className="gap-2 sm:gap-2 pt-1">
           <Button
             variant="outline"
             size="sm"
             onClick={() => setShowShareDialog(false)}
             disabled={isSharing}
-            className="h-9"
+            className="h-9 min-w-[80px]"
           >
             Cancel
           </Button>
@@ -495,10 +503,61 @@ export function XrayRecordCard({
                 // Execute the transaction
                 toast.dismiss();
                 toast.loading('Submitting to blockchain...');
-                
-                const result = await signAndExecuteTransaction({
-                  transaction: tx
+
+                // -----------------------------
+                // ---- Sponsor Transaction ----
+                // -----------------------------
+                // 1. Setup the transaction as you did
+                tx.setSender(currentAccount.address);
+                tx.setGasOwner(sponsorAddress);
+                const { data: coins } = await client.getCoins({
+                  owner: sponsorAddress,
+                  coinType: "0x2::sui::SUI"
                 });
+                if (coins.length === 0) throw new Error("Sponsor has no gas!");
+                if (coins.length === 0) throw new Error("Sponsor has no gas!");
+                tx.setGasPayment([{
+                    objectId: coins[0].coinObjectId,
+                    digest: coins[0].digest,
+                    version: coins[0].version,
+                }]);
+
+                console.log("Transaction configured");
+
+                // 2. Build the FULL Transaction Bytes (Remove 'onlyTransactionKind')
+                // This freezes the gas coins, gas budget, and sender into the bytes.
+                const txBytes = await tx.build({ client }); 
+
+                // 3. Convert bytes back to a Transaction object for the User Wallet to sign
+                // We use Transaction.from() (NOT fromKind) to preserve the gas/sponsor data.
+                const sponsoredTx = Transaction.from(txBytes);
+
+                console.log("Requesting User Signature...");
+
+                // 4. User signs the transaction
+                // The wallet will see the gasOwner is set to the sponsor and won't try to add its own coins.
+                const { signature: userSignature } = await signTransaction({
+                  transaction: sponsoredTx,
+                });
+
+                // 5. Sponsor signs the EXACT same bytes
+                const { signature: sponsorSignature } = await sponsorKeypair.signTransaction(txBytes);
+
+                console.log("Submitting Dual-Signed Transaction...");
+
+                // 6. Execute
+                const result = await client.executeTransactionBlock({
+                    transactionBlock: txBytes, // Submit the bytes we built in step 2
+                    signature: [userSignature, sponsorSignature], // Order usually doesn't matter, but having both is key
+                    options: {
+                        showEffects: true,
+                        showObjectChanges: true,
+                    }
+                });
+   
+                // const result = await signAndExecuteTransaction({
+                //   transaction: tx
+                // });
                 
                 console.log('Access granted to doctor:', result);
                 

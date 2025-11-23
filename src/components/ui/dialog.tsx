@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import * as DialogPrimitive from "@radix-ui/react-dialog@1.1.6";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react"; // Changed from XIcon to X
 
 import { cn } from "./utils";
@@ -92,11 +92,6 @@ function DialogContent({
         {...props}
       >
         {children}
-        {/* UPDATED: Positioned to right-4 top-4 and swapped XIcon for X */}
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-md p-2 text-foreground/60 hover:text-foreground hover:bg-muted/80 transition-all border border-border/50 hover:border-border disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <X className="size-5" />
-          <span className="sr-only">Close</span>
-        </DialogPrimitive.Close>
       </DialogPrimitive.Content>
     </DialogPortal>
   );

@@ -2,6 +2,7 @@ module drsui::doctor {
 
     use drsui::patient::{XRayImages, ValidateRequest};
     use sui::table::{Self, Table};
+    use sui::event;
 
     public struct DoctorCap has key, store {
         id: UID,
@@ -18,6 +19,11 @@ module drsui::doctor {
     public struct DoctorImages has key, store {
         id: UID,
         patients_data: Table<address, XRayImages>
+    }
+
+    public struct RequestEvent has copy, drop {
+        request_to: address,
+        x_ray: ID
     }
 
     fun init(ctx: &mut TxContext){
@@ -57,13 +63,18 @@ module drsui::doctor {
     }
 
     public fun add_doctor_request(self: &mut DoctorRegistry, request: &XRayImages, validation: ValidateRequest, doctor: address, ctx: &mut TxContext) {
-
         if(self.doctor_requests.contains(doctor)){
             self.doctor_requests.borrow_mut(doctor).push_back(validation.validation_id());
         } else {
             self.doctor_requests.add(doctor, vector::singleton(validation.validation_id()));
         };
         validation.destroy_request();
+        event::emit(
+            RequestEvent {
+                request_to: doctor,
+                x_ray: request.x_ray_data()
+            }
+        )
     }
 
     public fun doctor_id(self: &DoctorCap): ID {
