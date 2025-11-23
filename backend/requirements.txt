@@ -2,6 +2,7 @@ annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.11.0
 atoma-sdk @ git+https://github.com/atoma-network/atoma-sdk-python.git@ddac9ee8685eaf23196d985be1282b41f647bcc5
+base58>=2.1.1
 certifi==2025.11.12
 cffi==2.0.0
 charset-normalizer==3.4.4
@@ -16,6 +17,7 @@ idna==3.11
 numpy==2.3.5
 pillow==12.0.0
 pycparser==2.23
+pycryptodome>=3.19.0
 pydantic==2.12.4
 pydantic_core==2.41.5
 pydicom==3.0.1

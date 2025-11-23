@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Inbox, Users, Settings, ZoomIn, Contrast, Ruler, Lock, Unlock, Activity } from "lucide-react";
+import { Inbox, Users, Settings, ZoomIn, Contrast, Ruler, Lock, Unlock, Activity, Shield } from "lucide-react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
@@ -9,6 +9,7 @@ import { AuditTrailWidget } from "./doctor/AuditTrailWidget";
 import { GhostAnnotationOverlay } from "./doctor/GhostAnnotationOverlay";
 import { RequestAccessToast } from "./doctor/RequestAccessToast";
 import { DoctorDashboard } from "./doctor/DoctorDashboard";
+import { ZKVerificationDashboard } from "./ZKVerificationDashboard";
 import { useLanguage } from "./LanguageContext";
 import { useCurrentAccount, useSignPersonalMessage, useSuiClient } from "@mysten/dapp-kit";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
@@ -522,6 +523,17 @@ export function DoctorPortal() {
             <span className="font-medium text-sm">{t("doctor.nav.patients")}</span>
           </button>
           <button
+            onClick={() => setActiveNav("zk-verification")}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+              activeNav === "zk-verification"
+                ? "bg-primary/10 text-primary border border-primary/20"
+                : "hover:bg-sidebar-accent text-muted-foreground hover:text-sidebar-foreground"
+            }`}
+          >
+            <Shield className="size-5" />
+            <span className="font-medium text-sm">ZK Verification</span>
+          </button>
+          <button
             onClick={() => setActiveNav("settings")}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
               activeNav === "settings"
@@ -542,6 +554,8 @@ export function DoctorPortal() {
       {/* Main Content Area */}
       {activeNav === "dashboard" ? (
         <DoctorDashboard />
+      ) : activeNav === "zk-verification" ? (
+        <ZKVerificationDashboard />
       ) : activeNav === "patients" ? (
         <PatientsView />
       ) : activeNav === "settings" ? (

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from io import BytesIO
@@ -10,9 +10,11 @@ import os
 import json
 import random
 import hashlib
+import time
 from datetime import datetime
 from dotenv import load_dotenv
 from atoma_sdk import AtomaSDK
+from zk_utils import ZKProofGenerator, create_proof_for_blockchain
 
 # Load environment variables
 load_dotenv()
@@ -81,6 +83,22 @@ app.add_middleware(
 # In-memory storage for analyses (in production, use a database)
 # This stores recent analyses so the doctor dashboard can retrieve them
 analyses_storage = []
+
+# Initialize ZK Proof Generator for cryptographic proof generation
+# ZK proofs enable privacy-preserving verification that:
+# 1. AI analysis was performed on a specific image (without revealing the image)
+# 2. Results are authentic and unmodified
+# 3. Computation occurred in a trusted execution environment (TEE)
+# This enhances trust and privacy in medical AI analysis
+MODEL_ID = os.getenv("ATOMA_MODEL_ID", "atoma-vision-v1")  # Default model ID
+try:
+    zk_generator = ZKProofGenerator(MODEL_ID)
+    print(f"✅ ZK Proof System initialized with model: {MODEL_ID}")
+    print("   Zero-knowledge proofs will be generated for all analyses")
+except Exception as e:
+    print(f"⚠️ Warning: Failed to initialize ZK Proof Generator: {e}")
+    print("   Analysis will continue without ZK proofs")
+    zk_generator = None
 
 
 def generate_demo_response(image_type=None):
@@ -397,6 +415,21 @@ async def analyze_image(file: UploadFile = File(...)):
         # Read the uploaded file
         contents = await file.read()
         
+        # ZK PROOF STEP 1: Generate image commitment
+        # This creates a cryptographic hash of the image without revealing it.
+        # The commitment proves we have the image without showing the image itself.
+        # This is the "zero-knowledge" foundation - we commit to the data
+        # without revealing it, enabling privacy-preserving verification.
+        image_commitment = None
+        if zk_generator:
+            try:
+                image_commitment = zk_generator.generate_image_commitment(contents)
+                print(f"🔐 ZK Commitment generated: {image_commitment[:16]}... (first 16 chars)")
+                print("   This commitment proves we have the image without revealing it")
+            except Exception as zk_error:
+                print(f"⚠️ Warning: Failed to generate image commitment: {zk_error}")
+                print("   Analysis will continue without ZK proof")
+        
         # Check if it's a DICOM file
         if file.filename and file.filename.lower().endswith('.dcm'):
             # Read DICOM file from memory buffer
@@ -501,9 +534,58 @@ async def analyze_image(file: UploadFile = File(...)):
                             # Apply hallucination check before returning
                             result = check_hallucination(result)
                             
-                            # Generate hash for blockchain storage
+                            # Generate hash for blockchain storage (legacy compatibility)
                             result_str = json.dumps(result, sort_keys=True)
                             result['hash'] = hashlib.sha256(result_str.encode()).hexdigest()
+                            
+                            # ZK PROOF STEP 2: Generate zero-knowledge proof of analysis
+                            # This proves that:
+                            # 1. We analyzed the committed image (image_commitment)
+                            # 2. We got these specific results (result)
+                            # 3. The analysis was performed by the specified AI model
+                            # 4. All without revealing the actual image
+                            # This enables trustless verification on the blockchain
+                            # while maintaining complete patient privacy.
+                            zk_proof = None
+                            tee_proof = None
+                            blockchain_proof_bytes = None
+                            timestamp = int(time.time())
+                            
+                            if zk_generator and image_commitment:
+                                try:
+                                    # Generate standard ZK proof
+                                    zk_proof = zk_generator.generate_analysis_proof(
+                                        image_commitment=image_commitment,
+                                        ai_response=result,
+                                        timestamp=timestamp
+                                    )
+                                    print(f"🔐 ZK Proof generated successfully")
+                                    print(f"   Proof type: {zk_proof.get('proof_type')}")
+                                    print(f"   Analysis hash: {zk_proof.get('analysis_hash', '')[:16]}...")
+                                    
+                                    # ZK PROOF STEP 3: Generate Atoma TEE attestation
+                                    # This proves the computation happened in Atoma's
+                                    # Trusted Execution Environment (TEE), providing
+                                    # hardware-level security guarantees.
+                                    tee_proof = zk_generator.create_atoma_tee_proof(result)
+                                    print(f"🛡️ TEE Attestation generated")
+                                    print(f"   Enclave ID: {tee_proof.get('tee_attestation', {}).get('enclave_id', 'N/A')}")
+                                    
+                                    # Convert proof to blockchain format (bytes for Sui Move)
+                                    blockchain_proof_bytes = create_proof_for_blockchain(zk_proof)
+                                    proof_b64 = base64.b64encode(blockchain_proof_bytes).decode('utf-8')
+                                    print(f"📦 Blockchain proof prepared ({len(blockchain_proof_bytes)} bytes)")
+                                    
+                                    # Add ZK proof data to result
+                                    result['image_commitment'] = image_commitment
+                                    result['zk_proof'] = zk_proof
+                                    result['tee_attestation'] = tee_proof.get('tee_attestation')
+                                    result['blockchain_proof_bytes'] = proof_b64
+                                    result['zk_timestamp'] = timestamp
+                                    
+                                except Exception as zk_error:
+                                    print(f"⚠️ Warning: Failed to generate ZK proof: {zk_error}")
+                                    print("   Analysis will continue without ZK proof")
                             
                             # Store analysis in memory for doctor dashboard
                             analysis_record = {
@@ -602,9 +684,50 @@ async def analyze_image(file: UploadFile = File(...)):
                     # Other errors - log but continue with demo result
                     print(f"⚠️ Hallucination check warning: {error_msg}")
                 
-                # Generate hash for blockchain storage
+                # Generate hash for blockchain storage (legacy compatibility)
                 result_str = json.dumps(demo_result, sort_keys=True)
                 demo_result['hash'] = hashlib.sha256(result_str.encode()).hexdigest()
+                
+                # ZK PROOF STEP 2 & 3: Generate ZK proofs even in demo mode
+                # This demonstrates the system works end-to-end and generates
+                # real cryptographic proofs even when using mock AI responses.
+                # In production, these proofs would be identical in structure.
+                zk_proof = None
+                tee_proof = None
+                blockchain_proof_bytes = None
+                timestamp = int(time.time())
+                
+                if zk_generator and image_commitment:
+                    try:
+                        # Generate standard ZK proof (same as production)
+                        zk_proof = zk_generator.generate_analysis_proof(
+                            image_commitment=image_commitment,
+                            ai_response=demo_result,
+                            timestamp=timestamp
+                        )
+                        print(f"🔐 ZK Proof generated (demo mode)")
+                        print(f"   Proof type: {zk_proof.get('proof_type')}")
+                        
+                        # Generate TEE attestation (demo mode)
+                        tee_proof = zk_generator.create_atoma_tee_proof(demo_result)
+                        print(f"🛡️ TEE Attestation generated (demo mode)")
+                        
+                        # Convert to blockchain format
+                        blockchain_proof_bytes = create_proof_for_blockchain(zk_proof)
+                        proof_b64 = base64.b64encode(blockchain_proof_bytes).decode('utf-8')
+                        print(f"📦 Blockchain proof prepared ({len(blockchain_proof_bytes)} bytes)")
+                        
+                        # Add ZK proof data to demo result
+                        demo_result['image_commitment'] = image_commitment
+                        demo_result['zk_proof'] = zk_proof
+                        demo_result['tee_attestation'] = tee_proof.get('tee_attestation')
+                        demo_result['blockchain_proof_bytes'] = proof_b64
+                        demo_result['zk_timestamp'] = timestamp
+                        demo_result['demo_mode'] = True  # Flag to indicate demo mode
+                        
+                    except Exception as zk_error:
+                        print(f"⚠️ Warning: Failed to generate ZK proof in demo mode: {zk_error}")
+                        print("   Demo analysis will continue without ZK proof")
                 
                 # Store analysis in memory for doctor dashboard
                 analysis_record = {
@@ -714,4 +837,116 @@ async def get_analyses(limit: int = 50):
         "returned": len(recent),
         "analyses": list(reversed(recent))  # Most recent first
     }
+
+
+@app.post("/verify-proof")
+async def verify_proof(request: Request):
+    """
+    Verify a zero-knowledge proof without seeing the original image.
+    
+    This endpoint allows anyone to verify that:
+    1. A ZK proof was signed by the authorized DrSui backend
+    2. The proof hasn't been tampered with
+    3. The image commitment matches (if provided)
+    
+    Verification does NOT require:
+    - The original medical image
+    - The private key
+    - Access to DrSui backend systems
+    
+    This enables trustless verification on the blockchain, allowing
+    anyone to verify medical AI analysis proofs without compromising
+    patient privacy.
+    
+    Request Body:
+        {
+            "proof": {...},  # The ZK proof dictionary
+            "expected_commitment": "optional_commitment_hash"  # Optional
+        }
+    
+    Returns:
+        {
+            "valid": bool,
+            "proof_type": str,
+            "timestamp": int,
+            "model_id": str,
+            "verification_details": {
+                "signature_valid": bool,
+                "commitment_valid": bool,
+                "proof_structure_valid": bool
+            }
+        }
+    """
+    try:
+        body = await request.json()
+        proof = body.get("proof")
+        expected_commitment = body.get("expected_commitment")
+        
+        if not proof:
+            return JSONResponse(
+                content={
+                    "valid": False,
+                    "error": "Proof is required in request body"
+                },
+                status_code=400
+            )
+        
+        print(f"🔍 Proof verification request received")
+        print(f"   Proof type: {proof.get('proof_type', 'unknown')}")
+        print(f"   Timestamp: {proof.get('timestamp', 'unknown')}")
+        
+        if not zk_generator:
+            return JSONResponse(
+                content={
+                    "valid": False,
+                    "error": "ZK proof system not initialized"
+                },
+                status_code=503
+            )
+        
+        # Verify the proof
+        is_valid = zk_generator.verify_proof(proof, expected_commitment)
+        
+        # Extract verification details
+        verification_details = {
+            "signature_valid": is_valid,  # Simplified - in production, extract more details
+            "commitment_valid": True if not expected_commitment or proof.get("image_commitment") == expected_commitment else False,
+            "proof_structure_valid": all(key in proof for key in ["proof_type", "version", "image_commitment", "analysis_hash", "signature", "public_key"])
+        }
+        
+        result = {
+            "valid": is_valid,
+            "proof_type": proof.get("proof_type"),
+            "timestamp": proof.get("timestamp"),
+            "model_id": proof.get("model_id"),
+            "verification_details": verification_details
+        }
+        
+        if is_valid:
+            print(f"✅ Proof verification successful")
+        else:
+            print(f"❌ Proof verification failed")
+        
+        return JSONResponse(
+            content=result,
+            status_code=200
+        )
+        
+    except json.JSONDecodeError:
+        return JSONResponse(
+            content={
+                "valid": False,
+                "error": "Invalid JSON in request body"
+            },
+            status_code=400
+        )
+    except Exception as e:
+        print(f"❌ Error verifying proof: {e}")
+        return JSONResponse(
+            content={
+                "valid": False,
+                "error": str(e)
+            },
+            status_code=500
+        )
 

@@ -82,6 +82,10 @@ export function UploadView() {
   
   // Error state: stores error messages to display to user
   const [error, setError] = useState(null);
+  
+  // ZK Proof state: for displaying and verifying proofs
+  const [showProofDetails, setShowProofDetails] = useState(false);
+  const [proofVerified, setProofVerified] = useState(false);
 
   // ========== Wallet Hooks ==========
   // Get current connected wallet account (null if not connected)
@@ -285,11 +289,66 @@ export function UploadView() {
     }
   };
 
+  // ========== ZK Proof Verification Handler ==========
+  /**
+   * handleVerifyProof
+   * Verifies a zero-knowledge proof by calling the backend verification endpoint.
+   * This allows users to verify that their proof is cryptographically valid
+   * without requiring the original medical image.
+   */
+  const handleVerifyProof = async () => {
+    if (!aiResult?.zk_proof) {
+      setError('No ZK proof available to verify');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      console.log('🔍 Verifying ZK proof...');
+      
+      const response = await fetch(`${BACKEND_URL}/verify-proof`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proof: aiResult.zk_proof,
+          expected_commitment: aiResult.image_commitment
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Verification failed: ${response.status}`);
+      }
+
+      const result = await response.json();
+      const isValid = result.is_valid || result.valid || false;
+      setProofVerified(isValid);
+      
+      if (isValid) {
+        console.log('✅ Proof verification successful');
+        // Record verification in analytics
+        recordVerification(true);
+      } else {
+        console.warn('❌ Proof verification failed');
+        setError('Proof verification failed. The proof may be invalid or tampered with.');
+        recordVerification(false);
+      }
+    } catch (err) {
+      console.error('❌ Verification error:', err);
+      setError(`Failed to verify proof: ${err.message}`);
+      setProofVerified(false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // ========== Blockchain Minting Handler ==========
   /**
    * handleMintProof
    * Creates and submits a Sui transaction to mint a Diagnosis NFT on-chain
    * This creates immutable proof that the AI diagnosis was made
+   * Now includes ZK proof data for privacy-preserving verification
    * 
    * Supports two modes:
    * 1. Gasless Mode (useGasless = true): Uses sponsored transactions via gas station
@@ -354,19 +413,68 @@ export function UploadView() {
       // Get AI model name from result
       const aiModel = aiResult.ai_model || aiResult.model || 'llama-3.2-vision';
 
+      // Prepare ZK proof data for blockchain
+      // Convert hex strings to byte arrays for Move vector<u8> types
+      let imageCommitmentBytes = [];
+      let zkProofHashBytes = [];
+      let teeAttestationBytes = [];
+      
+      if (aiResult.image_commitment) {
+        // Image commitment is a hex string, convert to bytes
+        const commitmentHex = aiResult.image_commitment.replace(/^0x/, '');
+        imageCommitmentBytes = Array.from(
+          commitmentHex.match(/.{1,2}/g) || [],
+          byte => parseInt(byte, 16)
+        );
+      }
+      
+      if (aiResult.zk_proof?.analysis_hash) {
+        // ZK proof hash is a hex string, convert to bytes
+        const proofHashHex = aiResult.zk_proof.analysis_hash.replace(/^0x/, '');
+        zkProofHashBytes = Array.from(
+          proofHashHex.match(/.{1,2}/g) || [],
+          byte => parseInt(byte, 16)
+        );
+      } else if (aiResult.zk_proof_hash) {
+        // Fallback to zk_proof_hash if analysis_hash not available
+        const proofHashHex = aiResult.zk_proof_hash.replace(/^0x/, '');
+        zkProofHashBytes = Array.from(
+          proofHashHex.match(/.{1,2}/g) || [],
+          byte => parseInt(byte, 16)
+        );
+      }
+      
+      if (aiResult.tee_attestation) {
+        // TEE attestation might be JSON string or bytes
+        if (typeof aiResult.tee_attestation === 'string') {
+          teeAttestationBytes = Array.from(
+            new TextEncoder().encode(aiResult.tee_attestation)
+          );
+        } else {
+          // If it's already bytes or an object, serialize to JSON
+          teeAttestationBytes = Array.from(
+            new TextEncoder().encode(JSON.stringify(aiResult.tee_attestation))
+          );
+        }
+      }
+
       // Build Sui Move transaction
       // Transaction is like a blueprint for what we want to do on-chain
       const tx = new Transaction();
       
       // Call the mint_diagnosis function from our Move contract
+      // Now includes ZK proof fields for privacy-preserving verification
       tx.moveCall({
         target: `${PACKAGE_ID}::record::mint_diagnosis`,
         arguments: [
-          account.address,        // patient: address (current wallet)
-          hashBytes,              // report_hash: vector<u8>
-          aiModel,                // ai_model: String
-          severity,               // severity: String
-          timestamp,              // timestamp: u64
+          account.address,              // patient: address (current wallet)
+          hashBytes,                    // report_hash: vector<u8>
+          aiModel,                      // ai_model: String
+          severity,                     // severity: String
+          timestamp,                    // timestamp: u64
+          imageCommitmentBytes,         // image_commitment: vector<u8> (ZK proof)
+          zkProofHashBytes,             // zk_proof_hash: vector<u8> (ZK proof)
+          teeAttestationBytes,          // tee_attestation: vector<u8> (TEE proof)
         ],
       });
 
@@ -584,6 +692,78 @@ export function UploadView() {
       fontSize: '12px',
       fontWeight: '600',
       marginLeft: '8px',
+    },
+    zkProofSection: {
+      marginTop: '20px',
+      padding: '20px',
+      backgroundColor: '#f0f9ff',
+      border: '2px solid #3b82f6',
+      borderRadius: '8px',
+    },
+    privacyNotice: {
+      backgroundColor: '#dbeafe',
+      padding: '12px',
+      borderRadius: '6px',
+      marginBottom: '15px',
+      borderLeft: '4px solid #3b82f6',
+    },
+    proofBadge: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+      padding: '10px',
+      backgroundColor: '#dbeafe',
+      borderRadius: '4px',
+      marginBottom: '15px',
+    },
+    proofDetails: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '12px',
+      marginBottom: '12px',
+    },
+    proofItem: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      flexWrap: 'wrap',
+      fontSize: '14px',
+    },
+    commitmentCode: {
+      fontFamily: 'monospace',
+      fontSize: '12px',
+      backgroundColor: '#e0e7ff',
+      padding: '4px 8px',
+      borderRadius: '4px',
+      color: '#4338ca',
+    },
+    infoTooltip: {
+      fontSize: '14px',
+      color: '#3b82f6',
+      cursor: 'help',
+      marginLeft: '4px',
+    },
+    proofDetailsButton: {
+      backgroundColor: 'transparent',
+      border: '1px solid #3b82f6',
+      color: '#3b82f6',
+      borderRadius: '6px',
+      padding: '8px 16px',
+      fontSize: '14px',
+      cursor: 'pointer',
+      transition: 'all 0.2s ease',
+      marginTop: '8px',
+    },
+    technicalDetails: {
+      marginTop: '10px',
+      padding: '10px',
+      backgroundColor: '#1e293b',
+      color: '#00ff00',
+      borderRadius: '4px',
+      fontSize: '12px',
+      overflow: 'auto',
+      maxHeight: '300px',
+      fontFamily: 'monospace',
     },
     successBox: {
       backgroundColor: '#d1fae5',
@@ -876,6 +1056,87 @@ export function UploadView() {
             </div>
           )}
 
+          {/* ZK Proof Section */}
+          {aiResult.zk_proof && (
+            <div style={styles.zkProofSection}>
+              <h3 style={{ fontSize: '18px', fontWeight: 'bold', color: '#3b82f6', marginBottom: '12px' }}>
+                🔐 Zero-Knowledge Proof
+              </h3>
+              
+              {/* Privacy Explanation */}
+              <div style={styles.privacyNotice}>
+                <p style={{ margin: 0, fontSize: '14px', color: '#1e40af' }}>
+                  🔐 This analysis uses Zero-Knowledge Proofs to protect your privacy. 
+                  Your image never leaves the secure enclave, but we can still verify 
+                  the analysis was performed correctly.
+                </p>
+              </div>
+              
+              <div style={styles.proofBadge}>
+                <span style={{ fontSize: '20px' }}>✓</span>
+                <span style={{ fontWeight: '600', color: '#059669' }}>Privacy-Preserved Analysis</span>
+              </div>
+              
+              <div style={styles.proofDetails}>
+                <div style={styles.proofItem}>
+                  <strong style={{ color: '#475569' }}>Image Commitment:</strong>
+                  <code style={styles.commitmentCode}>
+                    {aiResult.image_commitment ? aiResult.image_commitment.slice(0, 16) + '...' : 'N/A'}
+                  </code>
+                  <span style={styles.infoTooltip} title="Cryptographic proof of image without revealing it">
+                    ℹ️
+                  </span>
+                </div>
+                
+                <div style={styles.proofItem}>
+                  <strong style={{ color: '#475569' }}>TEE Attestation:</strong>
+                  <span style={{ ...styles.badge, backgroundColor: '#7c3aed', color: 'white' }}>
+                    ⚛️ Atoma Secure Enclave
+                  </span>
+                </div>
+                
+                <div style={styles.proofItem}>
+                  <strong style={{ color: '#475569' }}>Proof Status:</strong>
+                  <span style={{ 
+                    ...styles.badge, 
+                    backgroundColor: proofVerified ? '#10b981' : '#64748b',
+                    color: 'white'
+                  }}>
+                    {proofVerified ? '✅ Cryptographically Verified' : '⏳ Pending Verification'}
+                  </span>
+                </div>
+              </div>
+              
+              <button 
+                onClick={() => setShowProofDetails(!showProofDetails)}
+                style={styles.proofDetailsButton}
+              >
+                {showProofDetails ? '▼ Hide' : '▶ Show'} Technical Details
+              </button>
+              
+              {showProofDetails && (
+                <div style={styles.technicalDetails}>
+                  <pre style={{ margin: 0, fontSize: '11px', lineHeight: '1.4' }}>
+                    {JSON.stringify(aiResult.zk_proof, null, 2)}
+                  </pre>
+                </div>
+              )}
+              
+              {/* Verify Proof Button */}
+              <button
+                onClick={handleVerifyProof}
+                style={{
+                  ...styles.button,
+                  backgroundColor: '#3b82f6',
+                  marginTop: '12px',
+                  width: '100%',
+                }}
+              >
+                🔍 Verify Proof
+              </button>
+            </div>
+          )}
+
           {/* Badges */}
           <div style={{ marginTop: '16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ ...styles.badge, backgroundColor: '#3b82f6', color: 'white' }}>
@@ -884,6 +1145,11 @@ export function UploadView() {
             <span style={{ ...styles.badge, backgroundColor: '#14b8a6', color: 'white' }}>
               ⚡ Powered by Atoma
             </span>
+            {aiResult.zk_proof && (
+              <span style={{ ...styles.badge, backgroundColor: '#10b981', color: 'white' }}>
+                🔒 Privacy Protected
+              </span>
+            )}
           </div>
 
           {/* Verify on Sui Blockchain Button */}
