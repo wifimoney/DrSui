@@ -466,6 +466,7 @@ export function XrayRecordCard({
                 // Step 2: Create access request transaction
                 toast.dismiss();
                 toast.loading('Creating access request for doctor...');
+                console.log('package_id', package_id);
                 
                 const tx = new Transaction();
                 
@@ -480,7 +481,6 @@ export function XrayRecordCard({
                     tx.object(ownedId)         // XRayImages object
                   ]
                 });
-                
                 // Call add_doctor_request to link the request to the specific doctor
                 tx.moveCall({
                   target: `${package_id}::doctor::add_doctor_request`,
