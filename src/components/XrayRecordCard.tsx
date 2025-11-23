@@ -292,27 +292,31 @@ export function XrayRecordCard({
             </p>
           </div>
 
-          <div className="mt-6 flex items-center justify-between gap-4">
+          <div className="mt-6 flex items-center justify-between gap-3 flex-wrap">
             <Button 
               variant={isDecrypted ? "secondary" : "default"}
-              className={!isDecrypted ? "bg-primary hover:bg-primary-hover shadow-glow w-40" : "w-40"}
+              className={!isDecrypted ? "bg-primary hover:bg-primary/90 text-primary-foreground shadow-glow" : ""}
+              size="sm"
               onClick={handleDecrypt}
               disabled={isDecrypted || isDecrypting}
             >
               {isDecrypting ? (
                 <>
                   <Loader2 className="mr-2 size-4 animate-spin" />
-                  Decrypting...
+                  <span className="hidden sm:inline">Decrypting...</span>
+                  <span className="sm:hidden">Decrypting</span>
                 </>
               ) : isDecrypted ? (
                 <>
                   <Unlock className="mr-2 size-4" />
-                  View X-ray
+                  <span className="hidden sm:inline">View X-ray</span>
+                  <span className="sm:hidden">View</span>
                 </>
               ) : (
                 <>
                   <Eye className="mr-2 size-4" />
-                  Decrypt & View
+                  <span className="hidden sm:inline">Decrypt & View</span>
+                  <span className="sm:hidden">Decrypt</span>
                 </>
               )}
             </Button>
@@ -322,8 +326,6 @@ export function XrayRecordCard({
               <div className="flex items-center">
                 {isShared ? (
                   <PermissionSwitch 
-                    isShared={isShared}
-                    onToggle={(checked) => onShareToggle(checked)}
                     onRevoke={() => onShareToggle(false)}
                   />
                 ) : (
@@ -335,10 +337,11 @@ export function XrayRecordCard({
                       e.stopPropagation();
                       setShowShareDialog(true);
                     }}
-                    className="flex items-center gap-2"
+                    className="flex items-center gap-2 border-primary/20 text-primary hover:bg-primary/5 hover:border-primary/40 hover:text-primary transition-all duration-200 shadow-sm hover:shadow-md"
                   >
                     <Share2 className="size-4" />
-                    <span>Share with Doctor</span>
+                    <span className="hidden sm:inline font-medium">Share with Doctor</span>
+                    <span className="sm:hidden font-medium">Share</span>
                   </Button>
                 )}
               </div>
@@ -348,7 +351,7 @@ export function XrayRecordCard({
       </div>
     </Card>
 
-    {/* Share Dialog - Compact Design */}
+    {/* Share Dialog - Optimized Design */}
     <Dialog 
       open={showShareDialog} 
       onOpenChange={(open: boolean) => {
@@ -360,22 +363,22 @@ export function XrayRecordCard({
         }
       }}
     >
-      <DialogContent className="max-w-[420px] w-[90vw] p-6 gap-4">
-        <DialogHeader className="space-y-1.5 pr-8">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 bg-primary/10 rounded-lg">
+      <DialogContent className="max-w-[400px] w-[90vw] p-5 gap-4 sm:p-6 relative">
+        <DialogHeader className="space-y-1.5 pr-12">
+          <div className="flex items-center gap-2.5 pr-2">
+            <div className="p-1.5 bg-primary/10 rounded-lg flex-shrink-0">
               <Share2 className="size-4 text-primary" />
             </div>
-            <DialogTitle className="text-lg font-semibold">
+            <DialogTitle className="text-base font-semibold sm:text-lg flex-1">
               Share with Doctor
             </DialogTitle>
           </div>
-          <DialogDescription className="text-xs text-muted-foreground pl-9">
+          <DialogDescription className="text-xs text-muted-foreground pl-8">
             Enter doctor's Sui wallet address to grant access
           </DialogDescription>
         </DialogHeader>
         
-        <div className="space-y-3 py-3">
+        <div className="space-y-3 py-2">
           <div className="space-y-1.5">
             <Label htmlFor="doctor-address" className="text-xs font-medium">
               Wallet Address <span className="text-destructive">*</span>
@@ -388,27 +391,27 @@ export function XrayRecordCard({
                 setDoctorAddress(e.target.value);
                 setAddressError(null);
               }}
-              className={`font-mono text-xs h-9 ${addressError ? "border-destructive" : ""}`}
+              className={`font-mono text-xs h-9 ${addressError ? "border-destructive focus-visible:ring-destructive" : ""}`}
               disabled={isSharing}
               autoFocus
             />
           </div>
           
           {addressError && (
-            <div className="flex items-start gap-2 p-2 rounded-md bg-destructive/10 border border-destructive/20 animate-in slide-in-from-top-1 duration-150">
+            <div className="flex items-start gap-2 p-2.5 rounded-md bg-destructive/10 border border-destructive/20 animate-in slide-in-from-top-1 duration-150">
               <X className="size-3.5 text-destructive mt-0.5 shrink-0" />
-              <p className="text-xs text-destructive">{addressError}</p>
+              <p className="text-xs text-destructive leading-relaxed">{addressError}</p>
             </div>
           )}
         </div>
 
-        <DialogFooter className="gap-2 sm:gap-2 pt-2">
+        <DialogFooter className="gap-2 sm:gap-2 pt-1">
           <Button
             variant="outline"
             size="sm"
             onClick={() => setShowShareDialog(false)}
             disabled={isSharing}
-            className="h-9"
+            className="h-9 min-w-[80px]"
           >
             Cancel
           </Button>
