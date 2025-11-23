@@ -17,7 +17,7 @@ import React, { useState, useEffect } from 'react';
  * @param {Function} props.onStatusChange - Callback when status changes (receives status string)
  */
 export function GasStationStatus({ 
-  gasStationUrl = process.env.REACT_APP_GAS_STATION_URL || 
+  gasStationUrl = import.meta.env.VITE_GAS_STATION_URL || 
                   import.meta.env.VITE_GAS_STATION_URL || 
                   'http://localhost:3001',
   onStatusChange 

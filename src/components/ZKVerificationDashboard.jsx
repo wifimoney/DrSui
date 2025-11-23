@@ -32,7 +32,8 @@ import {
 } from './ui/tooltip';
 
 // Get package ID from environment variable
-const PACKAGE_ID = process.env.REACT_APP_PACKAGE_ID || process.env.VITE_PACKAGE_ID || 'YOUR_PACKAGE_ID_HERE';
+// Vite uses import.meta.env instead of process.env
+const PACKAGE_ID = import.meta.env.VITE_PACKAGE_ID || 'YOUR_PACKAGE_ID_HERE';
 
 /**
  * ZKVerificationDashboard Component

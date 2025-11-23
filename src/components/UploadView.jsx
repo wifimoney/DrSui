@@ -29,19 +29,19 @@ import { GasStationStatus } from './GasStationStatus';
 
 // Get backend URL from environment variable
 // Defaults to localhost:8000 if not set
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || process.env.VITE_BACKEND_URL || 'http://localhost:8000';
+// Vite uses import.meta.env instead of process.env
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
 // Get package ID from environment variable
 // This should be set to your deployed Move contract package ID
-const PACKAGE_ID = process.env.REACT_APP_PACKAGE_ID || process.env.VITE_PACKAGE_ID || 'YOUR_PACKAGE_ID_HERE';
+const PACKAGE_ID = import.meta.env.VITE_PACKAGE_ID || 'YOUR_PACKAGE_ID_HERE';
 
 // Get Sui network from environment variable (optional)
-const SUI_NETWORK = process.env.REACT_APP_SUI_NETWORK || process.env.VITE_SUI_NETWORK || 'testnet';
+const SUI_NETWORK = import.meta.env.VITE_SUI_NETWORK || 'testnet';
 
 // Get gas station URL from environment variable
-// Supports both Vite (import.meta.env.VITE_*) and Create React App (process.env.REACT_APP_*)
+// Vite uses import.meta.env instead of process.env
 const GAS_STATION_URL = 
-  process.env.REACT_APP_GAS_STATION_URL || 
   import.meta.env.VITE_GAS_STATION_URL || 
   'http://localhost:3001';
 
