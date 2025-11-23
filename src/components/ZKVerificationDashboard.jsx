@@ -221,7 +221,7 @@ export function ZKVerificationDashboard() {
       );
 
       // Show success message
-      alert('✅ Proof verified successfully!');
+      alert('✅ Dr. Sui proof verified successfully on-chain!');
       
     } catch (err) {
       console.error('❌ Verification failed:', err);
@@ -321,27 +321,27 @@ export function ZKVerificationDashboard() {
       <div style={styles.header}>
         <h2 style={styles.title}>
           <Shield style={{ marginRight: '12px', display: 'inline-block' }} />
-          ZK Proof Verification Dashboard
+          🔐 Zero-Knowledge Proof Verification
         </h2>
         <p style={styles.subtitle}>
-          Verify Zero-Knowledge proofs of medical diagnoses on the blockchain
+          Verify privacy-preserving proofs of Dr. Sui AI diagnoses stored on the Sui blockchain
         </p>
       </div>
 
       {/* Statistics Overview */}
       <div style={styles.statsGrid}>
         <StatCard
-          icon={<FileText className="w-6 h-6 text-teal-600" />}
+          icon={<FileText className="w-6 h-6" style={{ color: '#4DA2FF' }} />}
           label="Total Diagnoses"
           value={totalDiagnoses.toString()}
         />
         <StatCard
-          icon={<Verified className="w-6 h-6 text-green-600" />}
+          icon={<Verified className="w-6 h-6" style={{ color: '#10b981' }} />}
           label="Verified Proofs"
           value={verifiedCount.toString()}
         />
         <StatCard
-          icon={<Clock className="w-6 h-6 text-yellow-600" />}
+          icon={<Clock className="w-6 h-6" style={{ color: '#f59e0b' }} />}
           label="Pending Verification"
           value={pendingCount.toString()}
         />
@@ -353,7 +353,7 @@ export function ZKVerificationDashboard() {
           <div style={styles.searchContainer}>
             <Search style={styles.searchIcon} />
             <Input
-              placeholder="Search by patient address, model, or severity..."
+              placeholder="Search by patient address, AI model, or severity..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               style={styles.searchInput}
@@ -418,7 +418,7 @@ export function ZKVerificationDashboard() {
               onChange={(e) => setAutoVerify(e.target.checked)}
               style={styles.checkbox}
             />
-            Auto-verify proofs (experimental)
+            Auto-verify Dr. Sui proofs (experimental)
           </label>
         </div>
       </Card>
@@ -435,11 +435,11 @@ export function ZKVerificationDashboard() {
       {loading ? (
         <div style={styles.loadingBox}>
           <div style={styles.spinner}></div>
-          <p>Loading diagnoses from blockchain...</p>
+          <p>Loading Dr. Sui diagnoses from blockchain...</p>
         </div>
       ) : filteredDiagnoses.length === 0 ? (
         <Card style={styles.emptyCard}>
-          <p>No diagnoses found matching your filters.</p>
+          <p>No Dr. Sui diagnoses found matching your filters.</p>
         </Card>
       ) : (
         <div style={styles.diagnosesList}>
@@ -540,7 +540,7 @@ function DiagnosisCard({ diagnosis, onVerify, isVerifying }) {
 
       <div style={styles.cardBody}>
         <div style={styles.infoRow}>
-          <strong>AI Model:</strong> {diagnosis.ai_model}
+          <strong>Dr. Sui AI Model:</strong> {diagnosis.ai_model}
         </div>
         
         <div style={styles.proofSection}>
@@ -549,10 +549,10 @@ function DiagnosisCard({ diagnosis, onVerify, isVerifying }) {
             <code style={styles.code}>{bytesToHex(diagnosis.image_commitment)}</code>
             <Tooltip>
               <TooltipTrigger>
-                <Info style={{ width: '16px', height: '16px', color: '#3b82f6', cursor: 'help' }} />
+                <Info style={{ width: '16px', height: '16px', color: '#4DA2FF', cursor: 'help' }} />
               </TooltipTrigger>
               <TooltipContent>
-                <p>Cryptographic commitment to the medical image. Proves we have the image without revealing it.</p>
+                <p>Cryptographic commitment to the medical image. Dr. Sui proves it analyzed a specific image without revealing the image itself, preserving patient privacy.</p>
               </TooltipContent>
             </Tooltip>
           </div>
@@ -564,10 +564,10 @@ function DiagnosisCard({ diagnosis, onVerify, isVerifying }) {
             </Badge>
             <Tooltip>
               <TooltipTrigger>
-                <Info style={{ width: '16px', height: '16px', color: '#3b82f6', cursor: 'help' }} />
+                <Info style={{ width: '16px', height: '16px', color: '#4DA2FF', cursor: 'help' }} />
               </TooltipTrigger>
               <TooltipContent>
-                <p>Trusted Execution Environment attestation proves computation happened in a secure hardware enclave.</p>
+                <p>Atoma Trusted Execution Environment (TEE) attestation proves the AI analysis computation happened in a secure hardware enclave, ensuring data privacy and computation integrity.</p>
               </TooltipContent>
             </Tooltip>
           </div>
@@ -642,7 +642,7 @@ const styles = {
   title: {
     fontSize: '32px',
     fontWeight: 'bold',
-    color: '#0d9488',
+    color: '#4DA2FF', // Sea blue
     marginBottom: '8px',
     display: 'flex',
     alignItems: 'center',
@@ -660,7 +660,8 @@ const styles = {
   filtersCard: {
     padding: '20px',
     marginBottom: '24px',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#C0E6FF', // Aqua background
+    border: '1px solid #4DA2FF', // Sea blue border
   },
   filtersRow: {
     display: 'flex',
@@ -744,7 +745,7 @@ const styles = {
     width: '40px',
     height: '40px',
     border: '4px solid #e2e8f0',
-    borderTop: '4px solid #0d9488',
+    borderTop: '4px solid #4DA2FF', // Sea blue
     borderRadius: '50%',
     animation: 'spin 1s linear infinite',
     margin: '0 auto 16px',
@@ -808,9 +809,9 @@ const styles = {
   },
   proofSection: {
     padding: '12px',
-    backgroundColor: '#f0f9ff',
+    backgroundColor: '#C0E6FF', // Aqua background
     borderRadius: '8px',
-    border: '1px solid #bfdbfe',
+    border: '1px solid #4DA2FF', // Sea blue border
   },
   proofRow: {
     display: 'flex',
@@ -822,10 +823,10 @@ const styles = {
   code: {
     fontFamily: 'monospace',
     fontSize: '12px',
-    backgroundColor: '#e0e7ff',
+    backgroundColor: '#C0E6FF', // Aqua background
     padding: '4px 8px',
     borderRadius: '4px',
-    color: '#4338ca',
+    color: '#4DA2FF', // Sea blue text
   },
   buttonRow: {
     display: 'flex',
@@ -836,9 +837,11 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: '4px',
+    borderColor: '#4DA2FF', // Sea blue border
+    color: '#4DA2FF', // Sea blue text
   },
   verifyButton: {
-    backgroundColor: '#3b82f6',
+    backgroundColor: '#4DA2FF', // Sea blue
     color: 'white',
     display: 'flex',
     alignItems: 'center',
@@ -847,9 +850,9 @@ const styles = {
   expandedSection: {
     marginTop: '12px',
     padding: '12px',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#C0E6FF', // Aqua background
     borderRadius: '8px',
-    border: '1px solid #e2e8f0',
+    border: '1px solid #4DA2FF', // Sea blue border
   },
   detailRow: {
     fontSize: '14px',

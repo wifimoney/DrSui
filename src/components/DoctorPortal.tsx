@@ -43,7 +43,7 @@ export function DoctorPortal() {
   const [decryptedIds, setDecryptedIds] = useState<string[]>([]);
   const [decryptedImages, setDecryptedImages] = useState<Record<string, string>>({});
   const [isDecrypting, setIsDecrypting] = useState<string | null>(null);
-  const [showRequestToast, setShowRequestToast] = useState(true);
+  const [showRequestToast, setShowRequestToast] = useState(false); // Disabled auto-show notification
   const { t } = useLanguage();
   
   const currentAccount = useCurrentAccount();
@@ -456,12 +456,13 @@ export function DoctorPortal() {
 
   return (
     <div className="flex h-full min-h-[600px] relative">
-      {showRequestToast && (
+      {/* Patient Request notification disabled - was auto-showing placeholder data */}
+      {/* {showRequestToast && (
         <RequestAccessToast 
           onAccept={handleAcceptRequest}
           onDecline={handleDeclineRequest}
         />
-      )}
+      )} */}
       {/* Left Sidebar Navigation */}
       <aside className="w-72 bg-sidebar flex flex-col text-sidebar-foreground border-r border-sidebar-border shrink-0 transition-all duration-300">
         {/* Doctor Profile Section */}

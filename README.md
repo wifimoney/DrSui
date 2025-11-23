@@ -1,6 +1,13 @@
 # Dr. Sui - Medical Diagnosis on Sui Blockchain
 
-Dr. Sui is a decentralized medical imaging analysis platform that uses AI to analyze medical images (DICOM files) and stores immutable proof of diagnosis on the Sui blockchain.
+Dr. Sui is a decentralized medical imaging analysis platform that uses AI to analyze medical images (DICOM files) and stores immutable proof of diagnosis on the Sui blockchain with **privacy-preserving Zero-Knowledge Proofs**.
+
+## 🔐 Privacy & Security Features
+
+- **Zero-Knowledge Proofs**: Medical images are never stored on-chain - only cryptographic commitments
+- **Atoma TEE**: AI analysis runs in hardware-isolated secure enclaves
+- **Patient Privacy**: Full HIPAA/GDPR compliance through minimal data disclosure
+- **Immutable Audit Trail**: On-chain verification without exposing sensitive data
 
 ## 🚀 Quick Start
 
@@ -41,7 +48,7 @@ cd ..
 ```
 
 5. **Configure environment variables:**
-   - Create `backend/.env` with your Atoma SDK credentials
+   - Create `backend/.env` with your Atoma SDK credentials (see AI & Atoma Setup below)
    - Create `gas-station/.env` with sponsor wallet key (see Gas Station setup below)
    - Create `.env` in project root with frontend variables
 
@@ -58,6 +65,155 @@ Or start individually:
 - Backend: `cd backend && source venv/bin/activate && uvicorn main:app --reload --port 8000`
 - Gas Station: `cd gas-station && npm start`
 - Frontend: `npm run dev`
+
+## 🤖 AI & Atoma Network Integration
+
+### What LLM is Used?
+
+Dr. Sui uses **Llama 3.2 Vision models** through **Atoma Network** for medical image analysis:
+
+- **Primary Models**: Llama 3.2 Vision variants
+  - `llama-3.2-vision`
+  - `llama-3.2-vision-11b`
+  - `llama-3.2-90b-vision`
+  - `llama-3.2-11b-vision`
+- **Fallback**: `llama-3.2-90b` (text-only) if no vision model is available
+- **Model Selection**: Automatically detects and uses available vision models from Atoma
+
+### Atoma Network Benefits
+
+Atoma Network provides:
+- **Access to Llama Models**: State-of-the-art vision models for medical imaging
+- **Trusted Execution Environment (TEE)**: Hardware-isolated secure enclaves
+- **Privacy**: Even cloud providers cannot see your data
+- **Attestation**: Cryptographic proof that computation happened securely
+
+### Setup
+
+1. **Get Atoma API Key:**
+   - Sign up at [Atoma Network](https://atoma.network)
+   - Obtain your bearer authentication token
+
+2. **Configure Backend:**
+   
+   Create `backend/.env`:
+   ```env
+   # Atoma SDK Configuration
+   ATOMASDK_BEARER_AUTH=your_atoma_bearer_token_here
+   ATOMA_MODEL_ID=atoma-vision-v1
+   
+   # Demo Mode (optional - for testing without Atoma)
+   # DEMO_MODE=false
+   ```
+
+3. **How It Works:**
+   - Backend sends medical images to Atoma Network
+   - Atoma runs Llama models in secure TEE enclaves
+   - AI analysis results are returned with TEE attestation
+   - ZK proofs are generated linking image commitment to results
+
+### Demo Mode
+
+If you don't have Atoma credentials, you can enable demo mode:
+
+```env
+DEMO_MODE=true
+```
+
+This will:
+- Generate mock AI responses for testing
+- Still generate real ZK proofs (demonstrates full system)
+- Allow you to test the complete workflow
+
+**Note**: Demo mode is for development/testing only. Production requires Atoma Network access.
+
+## 🔐 Zero-Knowledge Proofs & Data Protection
+
+### What Data is Protected?
+
+**✅ Protected by ZK Proofs:**
+- **Medical Images** (X-rays, CT scans, DICOM files)
+  - Images are **never stored on-chain**
+  - Only cryptographic commitments (hashes) are stored
+  - Images cannot be reconstructed from commitments
+- **Patient Privacy**
+  - Full images never leave the secure enclave
+  - Only analysis results are returned
+  - Verification possible without revealing images
+
+**❌ NOT Protected by ZK Proofs:**
+- Analysis results (findings, severity, confidence) - these are stored and visible
+- The ZK proof itself is verifiable but doesn't hide analysis results
+
+### How ZK Proofs Protect Data
+
+#### Step 1: Image Commitment
+```python
+# Medical image is hashed into a commitment (SHA3-256)
+image_commitment = zk_generator.generate_image_commitment(image_bytes)
+# Result: 64-character hex string that uniquely identifies the image
+# But reveals NOTHING about the image content
+```
+
+**Properties:**
+- **One-way**: Cannot reconstruct image from commitment
+- **Binding**: Each unique image produces unique commitment
+- **Hiding**: Commitment reveals nothing about image content
+
+#### Step 2: Analysis Proof
+- Links image commitment to analysis results
+- Proves analysis was performed on the committed image
+- Cryptographically signed to prevent tampering
+- **Does NOT include the actual image**
+
+#### Step 3: Blockchain Storage
+- **Stored on-chain**: `image_commitment` (hash), `zk_proof_hash`, `tee_attestation`
+- **Never stored**: The actual medical image
+- **Size**: ~64 bytes vs. images (MBs to GBs)
+
+### Privacy Guarantees
+
+1. **Zero-Knowledge**: Prove analysis happened without showing the image
+2. **One-Way Hashing**: Cannot extract image from commitment
+3. **HIPAA/GDPR Compliance**: Minimal data disclosure
+4. **Tamper-Proof**: Cryptographically signed proofs
+5. **TEE Attestation**: Proves computation happened in Atoma's secure enclave
+
+### Example Flow
+
+```
+1. Patient uploads X-ray image
+   ↓
+2. Image is hashed → image_commitment (64 bytes)
+   ↓
+3. Image sent to Atoma TEE (secure enclave)
+   ↓
+4. Llama model analyzes image in TEE
+   ↓
+5. Analysis results returned
+   ↓
+6. ZK proof generated linking:
+   - image_commitment (what was analyzed)
+   - analysis_hash (results)
+   - TEE attestation (where it ran)
+   ↓
+7. Only commitments stored on-chain
+   ↓
+8. Original image never stored or revealed
+```
+
+### Verification
+
+Anyone can verify:
+- ✅ The proof was signed by Dr. Sui backend
+- ✅ The analysis was performed on a specific image (via commitment)
+- ✅ The computation happened in Atoma TEE
+- ✅ The proof hasn't been tampered with
+
+**Without needing:**
+- ❌ The original medical image
+- ❌ Access to Dr. Sui backend
+- ❌ The private key
 
 ## ⛽ Gasless Transactions
 
@@ -434,12 +590,43 @@ DrSui/
 - Port: 3000
 - URL: http://localhost:3000
 
+## 🧪 Testing
+
+### Test ZK Proof System
+
+Run comprehensive tests for the ZK proof system:
+
+```bash
+cd backend
+python3 test_zk_proofs.py
+```
+
+This tests:
+- Proof generation and structure
+- Proof verification and tamper detection
+- Image commitment properties
+- TEE attestation
+- Blockchain format conversion
+- Full workflow integration
+- Performance benchmarks
+- Security properties
+
 ## 📚 Additional Resources
 
+### Core Technologies
 - [Sui Documentation](https://docs.sui.io/)
 - [Sui Move Book](https://move-language.github.io/move/)
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
 - [React Documentation](https://react.dev/)
+
+### AI & Privacy
+- [Atoma Network](https://atoma.network) - TEE-secured AI inference
+- [Llama Models](https://llama.meta.com/) - Meta's open-source LLMs
+- [Zero-Knowledge Proofs](https://en.wikipedia.org/wiki/Zero-knowledge_proof) - Cryptographic privacy
+
+### Medical & Compliance
+- [HIPAA Compliance](https://www.hhs.gov/hipaa/index.html)
+- [GDPR](https://gdpr.eu/) - European data protection
 
 ## 📝 License
 
