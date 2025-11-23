@@ -16,7 +16,7 @@ import {
 import { fromHex } from "@mysten/sui/utils";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { PermissionSwitch } from "./patient/PermissionSwitch";
-import { useCurrentAccount, useSignPersonalMessage, useSuiClient, useSignAndExecuteTransaction, useSignTransaction } from "@mysten/dapp-kit";
+import { useCurrentAccount, useSignPersonalMessage, useSuiClient, useSignTransaction } from "@mysten/dapp-kit";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
 import { blobIdFromInt } from "@mysten/walrus";
@@ -36,7 +36,6 @@ interface XrayRecordCardProps {
 }
 
 export function XrayRecordCard({ 
-  id, 
   title, 
   date, 
   isShared = false,
@@ -47,10 +46,9 @@ export function XrayRecordCard({
   const patient_registry = import.meta.env.VITE_PATIENT_REGISTRY;
   const doctor_registry = import.meta.env.VITE_DOCTOR_REGISTRY;
   const package_id = import.meta.env.VITE_PACKAGE_ID;
-  const sponsorAddress = import.meta.env.VITE_SPONSOR_ACCOUNT; //
-  const sponsor_priv = import.meta.env.VITE_SPONSOR_ACCOUNT_PRIV; //
-  const sponsorKeypair = Ed25519Keypair.fromSecretKey(sponsor_priv);
-  const account = useCurrentAccount();
+  const sponsorAddress = import.meta.env.VITE_SPONSOR_ACCOUNT;
+  const sponsor_priv = import.meta.env.VITE_SPONSOR_ACCOUNT_PRIV;
+  const sponsorKeypair = sponsor_priv ? Ed25519Keypair.fromSecretKey(sponsor_priv) : null;
   const { mutateAsync: signTransaction } = useSignTransaction();
   // Seal server configuration
   const serverObjectIds = [
@@ -69,13 +67,11 @@ export function XrayRecordCard({
   });
 
   const { mutateAsync: signPersonalMessage } = useSignPersonalMessage();
-  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
   const [isDecrypted, setIsDecrypted] = useState(false);
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [recordData, setRecordData] = useState<any>(null);
   const [owned, setOwned] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(false);
   
   // --- DIALOG STATE ---
   const [showShareDialog, setShowShareDialog] = useState(false);
@@ -103,7 +99,6 @@ export function XrayRecordCard({
     const fetchData = async () => {
       if (!currentAccount?.address) return;
       
-      setIsLoading(true);
       try {
         const data = await patientData();
         const registryId = (data as any)?.data?.content?.fields?.registry?.fields?.id?.id;
@@ -133,8 +128,6 @@ export function XrayRecordCard({
         }
       } catch (error) {
         console.error('Error fetching patient data:', error);
-      } finally {
-        setIsLoading(false);
       }
     };
 
@@ -515,7 +508,6 @@ export function XrayRecordCard({
                   coinType: "0x2::sui::SUI"
                 });
                 if (coins.length === 0) throw new Error("Sponsor has no gas!");
-                if (coins.length === 0) throw new Error("Sponsor has no gas!");
                 tx.setGasPayment([{
                     objectId: coins[0].coinObjectId,
                     digest: coins[0].digest,
@@ -541,6 +533,9 @@ export function XrayRecordCard({
                 });
 
                 // 5. Sponsor signs the EXACT same bytes
+                if (!sponsorKeypair) {
+                  throw new Error("Sponsor keypair not configured");
+                }
                 const { signature: sponsorSignature } = await sponsorKeypair.signTransaction(txBytes);
 
                 console.log("Submitting Dual-Signed Transaction...");
