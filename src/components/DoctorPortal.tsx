@@ -9,7 +9,7 @@ import { AuditTrailWidget } from "./doctor/AuditTrailWidget";
 import { GhostAnnotationOverlay } from "./doctor/GhostAnnotationOverlay";
 import { RequestAccessToast } from "./doctor/RequestAccessToast";
 import { DoctorDashboard } from "./doctor/DoctorDashboard";
-import { ZKVerificationDashboard } from "./ZKVerificationDashboard";
+// import { ZKVerificationDashboard } from "./ZKVerificationDashboard";
 import { useLanguage } from "./LanguageContext";
 import { useCurrentAccount, useSignPersonalMessage, useSuiClient } from "@mysten/dapp-kit";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
@@ -339,10 +339,12 @@ export function DoctorPortal() {
     institution: "City General Hospital",
   };
 
-  const handleDecrypt = async (id: string, e: React.MouseEvent) => {
+  const handleDecrypt = async (id: string, requestIndex: number, e: React.MouseEvent) => {
     e.stopPropagation();
     if (isDecrypting) return;
-
+    
+    // Select this request to show it in the detail panel
+    setSelectedRequest(requestIndex);
     setIsDecrypting(id);
     
     try {
@@ -555,7 +557,13 @@ export function DoctorPortal() {
       {activeNav === "dashboard" ? (
         <DoctorDashboard />
       ) : activeNav === "zk-verification" ? (
-        <ZKVerificationDashboard />
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center">
+            <Shield className="size-16 mx-auto mb-4 text-muted-foreground" />
+            <h2 className="text-2xl font-bold mb-2">ZK Verification Dashboard</h2>
+            <p className="text-muted-foreground">Coming soon...</p>
+          </div>
+        </div>
       ) : activeNav === "patients" ? (
         <PatientsView />
       ) : activeNav === "settings" ? (
@@ -580,8 +588,8 @@ export function DoctorPortal() {
                 No incoming requests
               </div>
             ) : (
-              <div className="divide-y divide-border">
-                {incomingRequests.map((request, index) => {
+            <div className="divide-y divide-border">
+              {incomingRequests.map((request, index) => {
                 const decrypted = isDecrypted(request.id);
                 return (
                   <div
@@ -614,7 +622,7 @@ export function DoctorPortal() {
                           ? "bg-teal-50 text-primary border border-teal-100 hover:bg-teal-100" 
                           : "bg-primary hover:bg-primary-hover text-primary-foreground"
                       }`}
-                      onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleDecrypt(request.id, e)}
+                      onClick={(e: React.MouseEvent<HTMLButtonElement>) => handleDecrypt(request.id, index, e)}
                       disabled={decrypted || isDecrypting === request.id}
                     >
                       {isDecrypting === request.id ? (
@@ -637,18 +645,18 @@ export function DoctorPortal() {
                   </div>
                 );
               })}
-              </div>
+            </div>
             )}
           </div>
 
           {/* Right Column - Patient Detail View */}
           <div className="flex-1 bg-background overflow-y-auto p-8">
             {incomingRequests.length > 0 ? (
-              <div className="max-w-4xl">
-                <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-foreground font-bold text-3xl">
+            <div className="max-w-4xl">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-foreground font-bold text-3xl">
                     {incomingRequests[selectedRequest]?.name}
-                  </h2>
+                </h2>
                   {incomingRequests[selectedRequest] && !isDecrypted(incomingRequests[selectedRequest].id) && (
                    <div className="bg-amber-50 border border-amber-200 text-amber-800 px-3 py-1 rounded-full text-sm font-medium flex items-center gap-2">
                      <Lock className="size-3" />
@@ -669,7 +677,7 @@ export function DoctorPortal() {
                     </p>
                     <Button 
                       className="mt-6"
-                      onClick={(e: React.MouseEvent<HTMLButtonElement>) => incomingRequests[selectedRequest] && handleDecrypt(incomingRequests[selectedRequest].id, e)}
+                      onClick={(e: React.MouseEvent<HTMLButtonElement>) => incomingRequests[selectedRequest] && handleDecrypt(incomingRequests[selectedRequest].id, selectedRequest, e)}
                       disabled={incomingRequests[selectedRequest] && isDecrypting === incomingRequests[selectedRequest].id}
                     >
                       {incomingRequests[selectedRequest] && isDecrypting === incomingRequests[selectedRequest].id ? t("doctor.action.decrypting") : t("doctor.action.decrypt")}
@@ -688,10 +696,10 @@ export function DoctorPortal() {
                     />
                   ) : (
                     <>
-                      <div className="absolute inset-0 bg-gradient-to-br from-muted/20 to-background" />
-                      <div className="relative text-muted-foreground font-medium">
-                        {t("doctor.viewer.placeholder")}
-                      </div>
+                  <div className="absolute inset-0 bg-gradient-to-br from-muted/20 to-background" />
+                  <div className="relative text-muted-foreground font-medium">
+                    {t("doctor.viewer.placeholder")}
+                  </div>
                     </>
                   )}
                   {incomingRequests[selectedRequest] && isDecrypted(incomingRequests[selectedRequest].id) && <GhostAnnotationOverlay />}
@@ -755,7 +763,7 @@ export function DoctorPortal() {
                   </div>
                 </div>
               </Card>
-              </div>
+            </div>
             ) : (
               <div className="flex items-center justify-center h-full">
                 <p className="text-muted-foreground">No requests selected</p>
