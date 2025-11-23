@@ -6,7 +6,7 @@ import { Label } from "./ui/label";
 import { PatientsView } from "./doctor/PatientsView";
 import { SettingsView } from "./doctor/SettingsView";
 import { AuditTrailWidget } from "./doctor/AuditTrailWidget";
-import { GhostAnnotationOverlay } from "./doctor/GhostAnnotationOverlay";
+// import { GhostAnnotationOverlay } from "./doctor/GhostAnnotationOverlay"; // Removed annotation overlay feature
 import { RequestAccessToast } from "./doctor/RequestAccessToast";
 import { DoctorDashboard } from "./doctor/DoctorDashboard";
 // import { ZKVerificationDashboard } from "./ZKVerificationDashboard";
@@ -29,6 +29,8 @@ interface DoctorRequest {
   initials: string;
   condition: string;
   timestamp: string;
+  requestTime: number; // Store the actual timestamp for comparison
+  blobId: string; // Unique blobId for this request
   blobs: Array<{
     blobId: string;
     blobObjectId: string;
@@ -43,7 +45,7 @@ export function DoctorPortal() {
   const [decryptedIds, setDecryptedIds] = useState<string[]>([]);
   const [decryptedImages, setDecryptedImages] = useState<Record<string, string>>({});
   const [isDecrypting, setIsDecrypting] = useState<string | null>(null);
-  const [showRequestToast, setShowRequestToast] = useState(true);
+  const [showRequestToast, setShowRequestToast] = useState(false); // Changed from true to false to prevent auto-show
   const { t } = useLanguage();
   
   const currentAccount = useCurrentAccount();
@@ -85,6 +87,8 @@ export function DoctorPortal() {
   const [incomingRequests, setIncomingRequests] = useState<DoctorRequest[]>([]);
   const [isLoadingRequests, setIsLoadingRequests] = useState(false);
   const [doctorCapId, setDoctorCapId] = useState<string | null>(null);
+  const [eventEmitted, setEventEmitted] = useState<boolean>(false);
+  const [surfluxStatus, setSurfluxStatus] = useState<'CONNECTING' | 'OPEN' | 'CLOSED'>('CLOSED');
 
   // Helper function to calculate time ago
   const calculateTimeAgo = (timestamp: number): string => {
@@ -99,6 +103,20 @@ export function DoctorPortal() {
     if (hours > 0) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
     if (minutes > 0) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
     return 'Just now';
+  };
+
+  // Helper function to format timestamp to readable date/time
+  const formatCreationTime = (timestamp: number): string => {
+    if (!timestamp || timestamp === 0) return 'Unknown';
+    const date = new Date(timestamp);
+    return date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
   };
 
   // Fetch doctor requests from blockchain
@@ -116,24 +134,17 @@ export function DoctorPortal() {
           id: doctor_registry,
           options: { showContent: true },
         });
-        console.log('Doctor registry data:', registryData);
 
         // Step 2a: Get the doctor_caps table ID and fetch DoctorCap for this doctor
         const registryFields = (registryData as any)?.data?.content?.fields;
-        console.log('Registry fields:', registryFields);
         
         const doctorCapsField = registryFields?.doctor_caps;
-        console.log('Doctor caps field:', doctorCapsField);
         
         const doctorCapsTableId = doctorCapsField?.fields?.id?.id;
-        console.log('Doctor caps table ID:', doctorCapsTableId);
-        console.log('Doctor caps table size:', doctorCapsField?.fields?.size);
 
         // Check if doctor_list contains this doctor
         const doctorList = registryFields?.doctor_list || [];
-        console.log('Doctor list:', doctorList);
         const isDoctorInList = doctorList.includes(currentAccount.address);
-        console.log('Is doctor in list?', isDoctorInList);
 
         if (!isDoctorInList) {
           console.warn('⚠️ Doctor address not found in doctor_list. You may need to register as a doctor first.');
@@ -144,8 +155,6 @@ export function DoctorPortal() {
 
         if (doctorCapsTableId) {
           try {
-            console.log('Fetching DoctorCap for address:', currentAccount.address);
-            
             const doctorCapData = await client.getDynamicFieldObject({
               parentId: doctorCapsTableId,
               name: {
@@ -153,15 +162,13 @@ export function DoctorPortal() {
                 value: currentAccount.address,
               },
             });
-            console.log('Doctor cap data response:', JSON.stringify(doctorCapData, null, 2));
-
             // Check if we got an error (doctor not found in table)
             if ((doctorCapData as any)?.error) {
               const errorCode = (doctorCapData as any)?.error?.code;
               console.warn('⚠️ Error fetching DoctorCap:', errorCode);
               
               if (errorCode === 'dynamicFieldNotFound') {
-                console.warn('Doctor not found in doctor_caps table');
+  
                 toast.warning('Doctor Cap not found', {
                   description: 'Your doctor capability was not found. You may need to complete registration.',
                 });
@@ -169,18 +176,18 @@ export function DoctorPortal() {
               setDoctorCapId(null);
             } else {
               const capId = (doctorCapData as any)?.data?.content?.fields?.value;
-              console.log('Extracted cap ID:', capId);
+
               
               if (capId) {
                 setDoctorCapId(capId);
-                console.log('✅ Doctor Cap ID found:', capId);
+
                 toast.success('Doctor verified', {
                   description: 'Your doctor credentials have been verified.',
                   duration: 2000,
                 });
               } else {
                 console.warn('Doctor cap data found but no value field');
-                console.log('Full doctorCapData:', doctorCapData);
+       
               }
             }
           } catch (error) {
@@ -193,7 +200,7 @@ export function DoctorPortal() {
 
         // Step 2b: Get the doctor_requests table ID
         const doctorRequestsTableId = (registryData as any)?.data?.content?.fields?.doctor_requests?.fields?.id?.id;
-        console.log('Doctor requests table ID:', doctorRequestsTableId);
+
 
         if (!doctorRequestsTableId) {
           console.log('No doctor requests table found');
@@ -209,7 +216,7 @@ export function DoctorPortal() {
             value: currentAccount.address,
           },
         });
-        console.log('Doctor requests for this address:', doctorRequests);
+
 
         // Check if dynamic field was not found (doctor has no requests yet)
         if ((doctorRequests as any)?.error?.code === 'dynamicFieldNotFound') {
@@ -220,7 +227,7 @@ export function DoctorPortal() {
 
         // Step 4: Get the vector of RequestProposal IDs
         const requestProposalIds = (doctorRequests as any)?.data?.content?.fields?.value;
-        console.log('Request Proposal IDs:', requestProposalIds);
+
 
         if (!requestProposalIds || !Array.isArray(requestProposalIds) || requestProposalIds.length === 0) {
           console.log('No request proposal IDs found');
@@ -254,7 +261,6 @@ export function DoctorPortal() {
               id: xrayId,
               options: { showContent: true },
             });
-            console.log('XRay data:', xrayData);
 
             const fields = (xrayData as any)?.data?.content?.fields;
             const patientAddress = fields?.patient || 'Unknown';
@@ -268,12 +274,6 @@ export function DoctorPortal() {
               const size = blob?.fields?.size || '0';
               const bodyPart = bodyParts[index] || 'Unknown';
               
-              console.log(`Blob ${index}:`, {
-                blobId,
-                blobObjectId,
-                size,
-                bodyPart
-              });
               
               return {
                 blobId,
@@ -289,26 +289,79 @@ export function DoctorPortal() {
             // Calculate time ago from request timestamp
             const timeAgo = requestTime ? calculateTimeAgo(parseInt(requestTime)) : 'Recently';
             
-            return {
-              id: xrayId,
+            // Create a separate request for each blob to show distinct images
+            // Each RequestProposal has its own distinct creation time
+            return blobs.map((blob: { blobId: string; blobObjectId: string; size: string; bodyPart: string }) => ({
+              id: `${proposalId}-${blob.blobId}`, // Unique ID combining requestProposalId and blobId
               patientAddress,
               xrayImageId: xrayId,
               requestProposalId: proposalId,
               name: `Patient ${patientAddress.slice(0, 6)}...${patientAddress.slice(-4)}`,
               initials,
-              condition: bodyParts.length > 0 ? `${bodyParts[0]} X-Ray` : 'Medical Record',
+              condition: `${blob.bodyPart} X-Ray`,
               timestamp: timeAgo,
-              blobs,
-            };
+              requestTime: requestTime ? parseInt(requestTime) : 0, // Each RequestProposal has distinct time
+              blobs: [blob], // Single blob per request
+              blobId: blob.blobId, // Store blobId for reference
+            }));
           } catch (error) {
             console.error('Error fetching request proposal or XRay data:', error);
             return null;
           }
         });
 
-        const requests = (await Promise.all(requestPromises)).filter(Boolean) as DoctorRequest[];
-        setIncomingRequests(requests);
-        console.log('Fetched requests:', requests);
+        // Flatten the array since each request can return multiple blobs
+        const allRequests = (await Promise.all(requestPromises))
+          .filter(Boolean)
+          .flat() as DoctorRequest[];
+        
+        // Sort requests by requestTime (most recent first) to ensure we get the latest ones
+        const sortedRequests = allRequests.sort((a, b) => b.requestTime - a.requestTime);
+        
+        // Filter to keep only the most recent request for each distinct blobId
+        // But each RequestProposal has its own distinct creation time
+        // So we show the most recent RequestProposal for each distinct blob
+        const uniqueRequestsMap = new Map<string, DoctorRequest>();
+        
+        for (const request of sortedRequests) {
+          // Use blobId as the unique key to distinguish different images
+          // Each RequestProposal (even for the same blob) has its own distinct requestTime
+          const existing = uniqueRequestsMap.get(request.blobId);
+          
+          if (!existing || request.requestTime > existing.requestTime) {
+            // Keep the most recent RequestProposal for this blob
+            uniqueRequestsMap.set(request.blobId, request);
+          }
+        }
+        
+        // Convert map back to array and sort by requestTime (most recent first)
+        const uniqueRequests = Array.from(uniqueRequestsMap.values())
+          .sort((a, b) => b.requestTime - a.requestTime);
+        
+        setIncomingRequests(uniqueRequests);
+        console.log('Fetched requests (filtered):', uniqueRequests);
+        console.log('Original requests count:', allRequests.length, 'Unique blobIds:', uniqueRequests.length);
+        console.log('Distinct X-ray images:', uniqueRequests.map(r => ({ 
+          blobId: r.blobId,
+          bodyPart: r.condition,
+          xrayImageId: r.xrayImageId,
+          requestProposalId: r.requestProposalId,
+          requestTime: r.requestTime,
+          patient: r.name, 
+          timestamp: r.timestamp 
+        })));
+        
+        // Explain why requestProposalIds might be the same
+        const proposalIdGroups = uniqueRequests.reduce((acc, req) => {
+          if (!acc[req.requestProposalId]) {
+            acc[req.requestProposalId] = [];
+          }
+          acc[req.requestProposalId].push(req.blobId);
+          return acc;
+        }, {} as Record<string, string[]>);
+        
+        console.log('RequestProposal grouping:', proposalIdGroups);
+        console.log('Explanation: Multiple blobs from the same XRayImages object share the same RequestProposal ID because they were shared in the same request.');
 
       } catch (error) {
         console.error('Error fetching doctor requests:', error);
@@ -320,6 +373,241 @@ export function DoctorPortal() {
 
     fetchDoctorRequests();
   }, [currentAccount?.address, doctor_registry]);
+
+  // Auto-refresh requests when a new event is received
+  useEffect(() => {
+    if (eventEmitted) {
+      console.log('🔄 New event received, refreshing requests list...');
+      
+      // Small delay to ensure the transaction is processed on-chain
+      const refreshTimer = setTimeout(() => {
+        // Re-trigger the fetch by updating a dependency
+        // We'll use a refetch mechanism
+        if (currentAccount?.address && doctor_registry) {
+          // Re-fetch doctor requests
+          const refetchRequests = async () => {
+            setIsLoadingRequests(true);
+            try {
+              const registryData = await client.getObject({
+                id: doctor_registry,
+                options: { showContent: true },
+              });
+
+              const registryFields = (registryData as any)?.data?.content?.fields;
+              const doctorRequestsTableId = (registryFields as any)?.doctor_requests?.fields?.id?.id;
+
+              if (!doctorRequestsTableId) {
+                setIncomingRequests([]);
+                return;
+              }
+
+              const doctorRequests = await client.getDynamicFieldObject({
+                parentId: doctorRequestsTableId,
+                name: {
+                  type: 'address',
+                  value: currentAccount.address,
+                },
+              });
+
+              if ((doctorRequests as any)?.error?.code === 'dynamicFieldNotFound') {
+                setIncomingRequests([]);
+                return;
+              }
+
+              const requestProposalIds = (doctorRequests as any)?.data?.content?.fields?.value;
+
+              if (!requestProposalIds || !Array.isArray(requestProposalIds) || requestProposalIds.length === 0) {
+                setIncomingRequests([]);
+                return;
+              }
+
+              const requestPromises = requestProposalIds.map(async (proposalId: string) => {
+                try {
+                  const proposalData = await client.getObject({
+                    id: proposalId,
+                    options: { showContent: true },
+                  });
+
+                  const proposalFields = (proposalData as any)?.data?.content?.fields;
+                  const xrayId = proposalFields?.x_ray_data;
+                  const requestTime = proposalFields?.time;
+
+                  if (!xrayId) return null;
+
+                  const xrayData = await client.getObject({
+                    id: xrayId,
+                    options: { showContent: true },
+                  });
+
+                  const fields = (xrayData as any)?.data?.content?.fields;
+                  const patientAddress = fields?.patient || 'Unknown';
+                  const bodyParts = fields?.body_parts || [];
+                  const blobsData = fields?.blob || [];
+                  
+                  const blobs = blobsData.map((blob: any, index: number) => {
+                    const blobId = blob?.fields?.blob_id || '';
+                    const blobObjectId = blob?.fields?.id?.id || '';
+                    const size = blob?.fields?.size || '0';
+                    const bodyPart = bodyParts[index] || 'Unknown';
+                    
+                    return {
+                      blobId,
+                      blobObjectId,
+                      size,
+                      bodyPart
+                    };
+                  });
+                  
+                  const initials = patientAddress.slice(2, 4).toUpperCase();
+                  const timeAgo = requestTime ? calculateTimeAgo(parseInt(requestTime)) : 'Recently';
+                  
+                  return blobs.map((blob: { blobId: string; blobObjectId: string; size: string; bodyPart: string }) => ({
+                    id: `${proposalId}-${blob.blobId}`,
+                    patientAddress,
+                    xrayImageId: xrayId,
+                    requestProposalId: proposalId,
+                    name: `Patient ${patientAddress.slice(0, 6)}...${patientAddress.slice(-4)}`,
+                    initials,
+                    condition: `${blob.bodyPart} X-Ray`,
+                    timestamp: timeAgo,
+                    requestTime: requestTime ? parseInt(requestTime) : 0,
+                    blobs: [blob],
+                    blobId: blob.blobId,
+                  }));
+                } catch (error) {
+                  console.error('Error fetching request proposal or XRay data:', error);
+                  return null;
+                }
+              });
+
+              const allRequests = (await Promise.all(requestPromises))
+                .filter(Boolean)
+                .flat() as DoctorRequest[];
+              
+              const sortedRequests = allRequests.sort((a, b) => b.requestTime - a.requestTime);
+              
+              const uniqueRequestsMap = new Map<string, DoctorRequest>();
+              
+              for (const request of sortedRequests) {
+                const existing = uniqueRequestsMap.get(request.blobId);
+                if (!existing || request.requestTime > existing.requestTime) {
+                  uniqueRequestsMap.set(request.blobId, request);
+                }
+              }
+              
+              const uniqueRequests = Array.from(uniqueRequestsMap.values())
+                .sort((a, b) => b.requestTime - a.requestTime);
+              
+              setIncomingRequests(uniqueRequests);
+              console.log('✅ Requests list refreshed after new event');
+            } catch (error) {
+              console.error('Error refreshing doctor requests:', error);
+            } finally {
+              setIsLoadingRequests(false);
+            }
+          };
+
+          refetchRequests();
+        }
+      }, 2000);
+
+      return () => clearTimeout(refreshTimer);
+    }
+  }, [eventEmitted, currentAccount?.address, doctor_registry]);
+
+  // Surflux EventSource listener - following the sample implementation pattern
+  useEffect(() => {
+    const surfluxApiKey = import.meta.env.VITE_SURFLUX_API_KEY;
+    
+    if (!surfluxApiKey) {
+      console.warn('⚠️ Surflux API key not configured');
+      setSurfluxStatus('CLOSED');
+      return;
+    }
+
+    // Use testnet URL as shown in the sample
+    const SSE_URL = `https://testnet-flux.surflux.dev/events?api-key=${surfluxApiKey}`;
+    
+    // 1. Create the connection
+    console.log('🔌 Connecting to Surflux...');
+    setSurfluxStatus('CONNECTING');
+    const eventSource = new EventSource(SSE_URL);
+
+    // 2. Handle Connection Open
+    eventSource.onopen = () => {
+      console.log('✅ Surflux Connected!');
+      setSurfluxStatus('OPEN');
+    };
+
+    // 3. Handle Incoming Messages
+    eventSource.onmessage = (event) => {
+      console.log('📨 Event received:', event.data);
+      
+      try {
+        // Parse the JSON data
+        const payload = JSON.parse(event.data);
+        console.log('📦 Parsed Surflux event payload:', payload);
+
+        // 1. Check the top-level type
+        if (payload.type === 'package_event') {
+          // 2. Access the nested 'data' object where the real info lives
+          const eventData = payload.data;
+          const eventTypeString = eventData?.event_type; // e.g., "0x123::doctor::add_doctor_request"
+
+          // 3. Filter by checking if the string includes your package::module::event
+          // The format is always: Address::Module::EventName
+          if (eventTypeString && eventTypeString.includes(`${package_id}::doctor::add_doctor_request`)) {
+            console.log('🎯 Patient request event detected!');
+            // 'contents' holds the actual fields defined in your Move struct
+            console.log('Event Contents:', eventData.contents);
+            
+            // Extract patient info from event contents if available
+            const eventContents = eventData.contents || {};
+            const patientAddress = eventContents.patient || 'Unknown';
+            const bodyPart = eventContents.body_part || 'Medical Record';
+            
+            // Show popup notification with event details
+            toast.success('New Patient Request Arrived!', {
+              description: `Patient ${patientAddress.slice(0, 6)}...${patientAddress.slice(-4)} shared a ${bodyPart} record`,
+              duration: 5000,
+            });
+            
+            // Trigger refresh
+            setEventEmitted(true);
+            setShowRequestToast(true);
+            
+            // Log that event was emitted
+            console.log('✅ Event emitted flag set to true - refreshing requests...');
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error parsing Surflux event:', error);
+      }
+    };
+
+    // 4. Handle Errors
+    eventSource.onerror = (error) => {
+      console.error('❌ EventSource failed:', error);
+      // Native EventSource doesn't give detailed error info for security reasons
+      setSurfluxStatus('CLOSED');
+      eventSource.close();
+    };
+
+    // 5. CLEANUP (Crucial!)
+    // This runs when the component unmounts
+    return () => {
+      console.log('🔌 Closing Surflux connection...');
+      eventSource.close();
+      setSurfluxStatus('CLOSED');
+    };
+  }, [package_id, currentAccount?.address]); // Re-run if package_id or account changes
+
+  // Track eventEmitted state changes
+  useEffect(() => {
+    if (eventEmitted) {
+      console.log('📢 Event emitted flag is true - new patient request detected');
+    }
+  }, [eventEmitted]);
 
   const handleAcceptRequest = () => {
     // Refresh the requests list
@@ -573,7 +861,20 @@ export function DoctorPortal() {
           {/* Left Column - Incoming Requests */}
           <div className="w-96 bg-card border-r border-border overflow-y-auto">
             <div className="p-6 border-b border-border">
+              <div className="flex items-center justify-between mb-2">
               <h2 className="text-foreground font-semibold text-xl">{t("doctor.incoming.title")}</h2>
+                {/* Surflux Connection Status Indicator */}
+                <div className="flex items-center gap-1.5">
+                  <div className={`w-2 h-2 rounded-full ${
+                    surfluxStatus === 'OPEN' ? 'bg-green-500 animate-pulse' : 
+                    surfluxStatus === 'CONNECTING' ? 'bg-yellow-500' : 
+                    'bg-red-500'
+                  }`} />
+                  <span className="text-xs text-muted-foreground font-mono">
+                    {surfluxStatus}
+                  </span>
+                </div>
+              </div>
               <p className="text-muted-foreground mt-1">
                 {incomingRequests.length} {t("doctor.incoming.pending")}
               </p>
@@ -614,6 +915,9 @@ export function DoctorPortal() {
                         </div>
                         <p className="text-muted-foreground mb-2">{request.condition}</p>
                         <p className="text-muted-foreground text-sm">{request.timestamp}</p>
+                        <p className="text-muted-foreground text-xs mt-1 font-mono">
+                          Created: {formatCreationTime(request.requestTime)}
+                        </p>
                       </div>
                     </div>
                     <Button
@@ -702,7 +1006,6 @@ export function DoctorPortal() {
                   </div>
                     </>
                   )}
-                  {incomingRequests[selectedRequest] && isDecrypted(incomingRequests[selectedRequest].id) && <GhostAnnotationOverlay />}
                 </div>
                 {/* Tool Icons Row */}
                 <div className="bg-card p-4 flex items-center gap-2 border-t border-border relative z-10">
@@ -727,6 +1030,14 @@ export function DoctorPortal() {
                 )}
                 <h3 className="text-foreground font-semibold text-lg mb-4">{t("doctor.metadata.title")}</h3>
                 <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <Label className="text-muted-foreground text-xs uppercase tracking-wide mb-1 block">
+                      Request Created
+                    </Label>
+                    <p className="text-foreground font-medium">
+                      {incomingRequests[selectedRequest] ? formatCreationTime(incomingRequests[selectedRequest].requestTime) : 'N/A'}
+                    </p>
+                  </div>
                   <div>
                     <Label className="text-muted-foreground text-xs uppercase tracking-wide mb-1 block">
                       {t("doctor.metadata.name")}

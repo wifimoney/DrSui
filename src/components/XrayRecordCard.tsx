@@ -16,13 +16,14 @@ import {
 import { fromHex } from "@mysten/sui/utils";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import { PermissionSwitch } from "./patient/PermissionSwitch";
-import { useCurrentAccount, useSignPersonalMessage, useSuiClient, useSignAndExecuteTransaction } from "@mysten/dapp-kit";
+import { useCurrentAccount, useSignPersonalMessage, useSuiClient, useSignAndExecuteTransaction, useSignTransaction } from "@mysten/dapp-kit";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
 import { blobIdFromInt } from "@mysten/walrus";
 import { SealClient, SessionKey } from "@mysten/seal";
 import { Transaction } from "@mysten/sui/transactions";
 import { toast } from 'sonner';
+import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 
 interface XrayRecordCardProps {
   id: string;
@@ -46,7 +47,11 @@ export function XrayRecordCard({
   const patient_registry = import.meta.env.VITE_PATIENT_REGISTRY;
   const doctor_registry = import.meta.env.VITE_DOCTOR_REGISTRY;
   const package_id = import.meta.env.VITE_PACKAGE_ID;
-  
+  const sponsorAddress = import.meta.env.VITE_SPONSOR_ACCOUNT; //
+  const sponsor_priv = import.meta.env.VITE_SPONSOR_ACCOUNT_PRIV; //
+  const sponsorKeypair = Ed25519Keypair.fromSecretKey(sponsor_priv);
+  const account = useCurrentAccount();
+  const { mutateAsync: signTransaction } = useSignTransaction();
   // Seal server configuration
   const serverObjectIds = [
     "0x164ac3d2b3b8694b8181c13f671950004765c23f270321a45fdd04d40cccf0f2", 
@@ -495,10 +500,61 @@ export function XrayRecordCard({
                 // Execute the transaction
                 toast.dismiss();
                 toast.loading('Submitting to blockchain...');
-                
-                const result = await signAndExecuteTransaction({
-                  transaction: tx
+
+                // -----------------------------
+                // ---- Sponsor Transaction ----
+                // -----------------------------
+                // 1. Setup the transaction as you did
+                tx.setSender(currentAccount.address);
+                tx.setGasOwner(sponsorAddress);
+                const { data: coins } = await client.getCoins({
+                  owner: sponsorAddress,
+                  coinType: "0x2::sui::SUI"
                 });
+                if (coins.length === 0) throw new Error("Sponsor has no gas!");
+                if (coins.length === 0) throw new Error("Sponsor has no gas!");
+                tx.setGasPayment([{
+                    objectId: coins[0].coinObjectId,
+                    digest: coins[0].digest,
+                    version: coins[0].version,
+                }]);
+
+                console.log("Transaction configured");
+
+                // 2. Build the FULL Transaction Bytes (Remove 'onlyTransactionKind')
+                // This freezes the gas coins, gas budget, and sender into the bytes.
+                const txBytes = await tx.build({ client }); 
+
+                // 3. Convert bytes back to a Transaction object for the User Wallet to sign
+                // We use Transaction.from() (NOT fromKind) to preserve the gas/sponsor data.
+                const sponsoredTx = Transaction.from(txBytes);
+
+                console.log("Requesting User Signature...");
+
+                // 4. User signs the transaction
+                // The wallet will see the gasOwner is set to the sponsor and won't try to add its own coins.
+                const { signature: userSignature } = await signTransaction({
+                  transaction: sponsoredTx,
+                });
+
+                // 5. Sponsor signs the EXACT same bytes
+                const { signature: sponsorSignature } = await sponsorKeypair.signTransaction(txBytes);
+
+                console.log("Submitting Dual-Signed Transaction...");
+
+                // 6. Execute
+                const result = await client.executeTransactionBlock({
+                    transactionBlock: txBytes, // Submit the bytes we built in step 2
+                    signature: [userSignature, sponsorSignature], // Order usually doesn't matter, but having both is key
+                    options: {
+                        showEffects: true,
+                        showObjectChanges: true,
+                    }
+                });
+   
+                // const result = await signAndExecuteTransaction({
+                //   transaction: tx
+                // });
                 
                 console.log('Access granted to doctor:', result);
                 

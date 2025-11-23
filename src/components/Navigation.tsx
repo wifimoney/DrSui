@@ -2,6 +2,10 @@ import { LayoutDashboard, Stethoscope } from "lucide-react";
 import { useLanguage } from "./LanguageContext";
 import drSuiLogo from "../assets/drsui_symbol.png";
 import { WalletButton } from "./WalletButton";
+import { useCurrentAccount } from "@mysten/dapp-kit";
+import { useState, useEffect } from "react";
+import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import { getFullnodeUrl } from "@mysten/sui/client";
 
 interface NavigationProps {
   currentPage: "patient" | "upload" | "doctor";
@@ -10,6 +14,60 @@ interface NavigationProps {
 
 export function Navigation({ currentPage, onNavigate }: NavigationProps) {
   const { language, setLanguage, t } = useLanguage();
+  const currentAccount = useCurrentAccount();
+  const doctor_registry = import.meta.env.VITE_DOCTOR_REGISTRY;
+  const [hasDoctorCap, setHasDoctorCap] = useState<boolean>(false);
+
+  // Check if user has doctor cap
+  useEffect(() => {
+    const checkDoctorCap = async () => {
+      if (!currentAccount?.address || !doctor_registry) {
+        setHasDoctorCap(false);
+        return;
+      }
+
+      try {
+        const client = new SuiJsonRpcClient({
+          url: getFullnodeUrl('testnet'),
+          network: 'testnet',
+        });
+
+        const registryData = await client.getObject({
+          id: doctor_registry,
+          options: { showContent: true },
+        });
+
+        const registryFields = (registryData as any)?.data?.content?.fields;
+        const doctorCapsField = registryFields?.doctor_caps;
+        const doctorCapsTableId = doctorCapsField?.fields?.id?.id;
+
+        if (!doctorCapsTableId) {
+          setHasDoctorCap(false);
+          return;
+        }
+
+        const doctorCapData = await client.getDynamicFieldObject({
+          parentId: doctorCapsTableId,
+          name: {
+            type: 'address',
+            value: currentAccount.address,
+          },
+        });
+
+        if ((doctorCapData as any)?.error?.code === 'dynamicFieldNotFound') {
+          setHasDoctorCap(false);
+        } else {
+          const capId = (doctorCapData as any)?.data?.content?.fields?.value;
+          setHasDoctorCap(!!capId);
+        }
+      } catch (error) {
+        console.error('Error checking doctor cap:', error);
+        setHasDoctorCap(false);
+      }
+    };
+
+    checkDoctorCap();
+  }, [currentAccount?.address, doctor_registry]);
 
   return (
     <nav className="bg-white border-b border-border px-8 py-4">
@@ -37,17 +95,19 @@ export function Navigation({ currentPage, onNavigate }: NavigationProps) {
               <LayoutDashboard className="size-4" />
               <span>{t("nav.patient")}</span>
             </button>
-            <button
-              onClick={() => onNavigate("doctor")}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
-                currentPage === "doctor"
-                  ? "bg-teal-50 text-primary shadow-glow"
-                  : "text-muted-foreground hover:bg-slate-50 hover:text-foreground"
-              }`}
-            >
-              <Stethoscope className="size-4" />
-              <span>{t("nav.doctor")}</span>
-            </button>
+            {hasDoctorCap && (
+              <button
+                onClick={() => onNavigate("doctor")}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-all ${
+                  currentPage === "doctor"
+                    ? "bg-teal-50 text-primary shadow-glow"
+                    : "text-muted-foreground hover:bg-slate-50 hover:text-foreground"
+                }`}
+              >
+                <Stethoscope className="size-4" />
+                <span>{t("nav.doctor")}</span>
+              </button>
+            )}
           </div>
         </div>
 

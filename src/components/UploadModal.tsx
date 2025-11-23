@@ -10,13 +10,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
-import { useCurrentAccount, useSignPersonalMessage, useSuiClient, useSignAndExecuteTransaction, ConnectModal } from "@mysten/dapp-kit";
+import { useCurrentAccount, useSignPersonalMessage, useSuiClient, useSignAndExecuteTransaction, ConnectModal, useSignTransaction } from "@mysten/dapp-kit";
 import { SealClient } from "@mysten/seal";
 import { SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { getFullnodeUrl } from "@mysten/sui/client";
 import { walrus, WalrusFile } from '@mysten/walrus';
 import { toast } from 'sonner';
 import { Transaction } from "@mysten/sui/transactions";
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 interface UploadModalProps {
   onClose: () => void;
   onSuccess?: () => void;
@@ -26,8 +27,12 @@ export function UploadModal({ onClose, onSuccess }: UploadModalProps) {
   const package_id = import.meta.env.VITE_PACKAGE_ID;
   const patient_registry = import.meta.env.VITE_PATIENT_REGISTRY;
   const doctor_address = import.meta.env.VITE_DOCTOR_ACCOUNT;
+  const sponsorAddress = import.meta.env.VITE_SPONSOR_ACCOUNT; //
+  const sponsor_priv = import.meta.env.VITE_SPONSOR_ACCOUNT_PRIV; //
+  const sponsorKeypair = Ed25519Keypair.fromSecretKey(sponsor_priv);
   const account = useCurrentAccount();
   const { mutateAsync: signPersonalMessage } = useSignPersonalMessage();
+  const { mutateAsync: signTransaction } = useSignTransaction();
   const suiClient = useSuiClient();
   const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
   
@@ -204,10 +209,68 @@ export function UploadModal({ onClose, onSuccess }: UploadModalProps) {
         owner: account?.address || '',
         deletable: true,
       });
-        
-      const { digest } = await signAndExecuteTransaction({ 
-        transaction: registerTx 
+
+      // -------------------------------------------
+      // ---------Sponsor transaction---------------
+      // -------------------------------------------
+      // 1. Setup the transaction as you did
+      registerTx.setSender(account.address);
+      registerTx.setGasOwner(sponsorAddress);
+
+      const { data: coins } = await client.getCoins({
+        owner: sponsorAddress,
+        coinType: "0x2::sui::SUI"
       });
+      if (coins.length === 0) throw new Error("Sponsor has no gas!");
+
+      registerTx.setGasPayment([{
+          objectId: coins[0].coinObjectId,
+          digest: coins[0].digest,
+          version: coins[0].version,
+      }]);
+
+      console.log("Transaction configured");
+
+      // 2. Build the FULL Transaction Bytes (Remove 'onlyTransactionKind')
+      // This freezes the gas coins, gas budget, and sender into the bytes.
+      const txBytes = await registerTx.build({ client }); 
+
+      // 3. Convert bytes back to a Transaction object for the User Wallet to sign
+      // We use Transaction.from() (NOT fromKind) to preserve the gas/sponsor data.
+      const sponsoredTx = Transaction.from(txBytes);
+
+      console.log("Requesting User Signature...");
+
+      // 4. User signs the transaction
+      // The wallet will see the gasOwner is set to the sponsor and won't try to add its own coins.
+      const { signature: userSignature } = await signTransaction({
+        transaction: sponsoredTx,
+      });
+
+      // 5. Sponsor signs the EXACT same bytes
+      const { signature: sponsorSignature } = await sponsorKeypair.signTransaction(txBytes);
+
+      console.log("Submitting Dual-Signed Transaction...");
+
+      // 6. Execute
+      const { digest } = await client.executeTransactionBlock({
+          transactionBlock: txBytes, // Submit the bytes we built in step 2
+          signature: [userSignature, sponsorSignature], // Order usually doesn't matter, but having both is key
+          options: {
+              showEffects: true,
+              showObjectChanges: true,
+          }
+      });
+
+      console.log("Finished:", digest);
+      // -------------------------------------------
+      // ---------Sponsor transaction---------------
+      // -------------------------------------------
+
+
+      // const { digest } = await signAndExecuteTransaction({ 
+      //   transaction: registerTx 
+      // });
         
       toast.dismiss();
       toast.loading('Uploading encrypted file to Walrus storage...');
@@ -325,9 +388,65 @@ export function UploadModal({ onClose, onSuccess }: UploadModalProps) {
           blobId = createdChange.objectId;
         }
       }
-      const createResult = await signAndExecuteTransaction({ 
-        transaction: tx
+
+      // -------------------------------------------
+      // ---------Sponsor transaction---------------
+      // -------------------------------------------
+      // 1. Setup the transaction as you did
+      tx.setSender(account.address);
+      tx.setGasOwner(sponsorAddress);
+      const { data: coins_2 } = await client.getCoins({
+        owner: sponsorAddress,
+        coinType: "0x2::sui::SUI"
       });
+      if (coins_2.length === 0) throw new Error("Sponsor has no gas!");
+      if (coins_2.length === 0) throw new Error("Sponsor has no gas!");
+      tx.setGasPayment([{
+          objectId: coins_2[0].coinObjectId,
+          digest: coins_2[0].digest,
+          version: coins_2[0].version,
+      }]);
+
+      console.log("Transaction configured");
+
+      // 2. Build the FULL Transaction Bytes (Remove 'onlyTransactionKind')
+      // This freezes the gas coins, gas budget, and sender into the bytes.
+      const txBytes_2 = await tx.build({ client }); 
+
+      // 3. Convert bytes back to a Transaction object for the User Wallet to sign
+      // We use Transaction.from() (NOT fromKind) to preserve the gas/sponsor data.
+      const sponsoredTx_2 = Transaction.from(txBytes_2);
+
+      console.log("Requesting User Signature...");
+
+      // 4. User signs the transaction
+      // The wallet will see the gasOwner is set to the sponsor and won't try to add its own coins.
+      const { signature: userSignature_2 } = await signTransaction({
+        transaction: sponsoredTx_2,
+      });
+
+      // 5. Sponsor signs the EXACT same bytes
+      const { signature: sponsorSignature_2 } = await sponsorKeypair.signTransaction(txBytes_2);
+
+      console.log("Submitting Dual-Signed Transaction...");
+
+      // 6. Execute
+      const createResult = await client.executeTransactionBlock({
+          transactionBlock: txBytes_2, // Submit the bytes we built in step 2
+          signature: [userSignature_2, sponsorSignature_2], // Order usually doesn't matter, but having both is key
+          options: {
+              showEffects: true,
+              showObjectChanges: true,
+          }
+      });
+      console.log("Finished:", digest);
+      // -------------------------------------------
+      // ---------Sponsor transaction---------------
+      // -------------------------------------------
+      
+      // const createResult = await signAndExecuteTransaction({ 
+      //   transaction: tx
+      // });
       
       console.log('✅ Project created on-chain:', createResult.digest);
       
