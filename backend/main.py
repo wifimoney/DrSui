@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Request
+from fastapi import FastAPI, UploadFile, File, Request, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from io import BytesIO
@@ -15,6 +15,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 from atoma_sdk import AtomaSDK
 from zk_utils import ZKProofGenerator, create_proof_for_blockchain
+from pydantic import BaseModel
+from typing import Optional
 
 # Load environment variables
 load_dotenv()
@@ -83,6 +85,28 @@ app.add_middleware(
 # In-memory storage for analyses (in production, use a database)
 # This stores recent analyses so the doctor dashboard can retrieve them
 analyses_storage = []
+
+# Cache for last analysis (for debugging)
+last_analysis_cache = None
+
+# Metadata schema for consistency
+class AnalysisMetadata(BaseModel):
+    patient_address: str
+    timestamp: str  # ISO 8601
+    image_name: str
+    image_size: int
+    image_type: Optional[str] = None
+    model_used: str
+    analysis_duration: float
+
+class AnalysisResponse(BaseModel):
+    status: str
+    report: dict
+    hash: str
+    model: str
+    metadata: AnalysisMetadata
+    zk_proof: Optional[dict] = None
+    tee_attestation: Optional[dict] = None
 
 # Initialize ZK Proof Generator for cryptographic proof generation
 # ZK proofs enable privacy-preserving verification that:
@@ -405,12 +429,26 @@ async def has_vision_model_available():
 
 
 @app.post("/analyze")
-async def analyze_image(file: UploadFile = File(...)):
+async def analyze_image(
+    file: UploadFile = File(...),
+    patient_address: str = Form(None),
+    timestamp: str = Form(None),
+    image_name: str = Form(None),
+    image_size: str = Form(None)
+):
     """
     Analyze a medical image file using AtomaSDK.
     If the file is a DICOM (.dcm) file, it converts it to PNG.
     """
-    print(f"📥 Received analysis request: {file.filename} ({file.size or 'unknown'} bytes)")
+    global last_analysis_cache  # Declare global at function start
+    start_time = time.time()
+    
+    # Log received metadata
+    print(f"📥 Received upload from: {patient_address or 'anonymous'}")
+    print(f"   File: {image_name or file.filename} ({image_size or file.size or 'unknown'} bytes)")
+    print(f"   Timestamp: {timestamp or 'not provided'}")
+    print(f"   Content type: {file.content_type}")
+    
     try:
         # Read the uploaded file
         contents = await file.read()
@@ -429,6 +467,9 @@ async def analyze_image(file: UploadFile = File(...)):
             except Exception as zk_error:
                 print(f"⚠️ Warning: Failed to generate image commitment: {zk_error}")
                 print("   Analysis will continue without ZK proof")
+        
+        # Process image file (DICOM, JPEG, PNG, etc.)
+        image_base64 = None
         
         # Check if it's a DICOM file
         if file.filename and file.filename.lower().endswith('.dcm'):
@@ -471,185 +512,262 @@ async def analyze_image(file: UploadFile = File(...)):
             # Convert PNG buffer to base64
             png_bytes = png_buffer.getvalue()
             image_base64 = base64.b64encode(png_bytes).decode('utf-8')
-            
-            # Check if DEMO_MODE is enabled OR if Atoma is not configured
-            use_demo_mode = DEMO_MODE or client is None
-            
-            # Try to use Atoma API first (unless in demo mode)
-            if not use_demo_mode:
-                try:
-                    # Check if Atoma has a vision model available
-                    vision_model = await has_vision_model_available()
-                    has_vision = vision_model is not None
-                    
-                    # Prepare messages with system prompt
-                    messages = [
-                        {
-                            "role": "system",
-                            "content": SYSTEM_PROMPT
-                        }
-                    ]
-                    
-                    # Crucial Logic: If Atoma has a Vision model, send image as base64
-                    # If NOT, use placeholder text prompt
-                    if has_vision:
-                        # Vision model available: Send image buffer as base64
-                        messages.append({
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/png;base64,{image_base64}"
-                                    }
-                                }
-                            ]
-                        })
-                        model_to_use = vision_model
+            print(f"📷 DICOM file processed and converted to PNG")
+        
+        # Check if it's a regular image file (JPEG, PNG, etc.)
+        elif file.content_type and file.content_type.startswith('image/'):
+            try:
+                # Open image directly with PIL
+                image = Image.open(BytesIO(contents))
+                
+                # Convert to RGB if necessary (handles RGBA, P, etc.)
+                if image.mode not in ('RGB', 'L'):
+                    if image.mode == 'RGBA':
+                        # Create white background for RGBA images
+                        rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                        rgb_image.paste(image, mask=image.split()[3] if len(image.split()) > 3 else None)
+                        image = rgb_image
                     else:
-                        # No vision model: Use placeholder text prompt
-                        messages.append({
-                            "role": "user",
-                            "content": "Analyze this text report of an X-ray..."
-                        })
-                        # Use a default text model
-                        model_to_use = "llama-3.2-90b"
-                    
-                    # Call AtomaSDK chat completions
-                    # Note: Using client.chat.create (SDK structure) 
-                    # which is conceptually equivalent to client.chat.completions.create
-                    response = await client.chat.create(
-                        messages=messages,
-                        model=model_to_use
-                    )
-                    
-                    # Extract response content
-                    if hasattr(response, 'choices') and len(response.choices) > 0:
-                        content = response.choices[0].message.content
-                        
-                        # Robust JSON parsing with markdown handling
-                        try:
-                            result = parse_json_response(content)
-                            
-                            # Apply hallucination check before returning
-                            result = check_hallucination(result)
-                            
-                            # Generate hash for blockchain storage (legacy compatibility)
-                            result_str = json.dumps(result, sort_keys=True)
-                            result['hash'] = hashlib.sha256(result_str.encode()).hexdigest()
-                            
-                            # ZK PROOF STEP 2: Generate zero-knowledge proof of analysis
-                            # This proves that:
-                            # 1. We analyzed the committed image (image_commitment)
-                            # 2. We got these specific results (result)
-                            # 3. The analysis was performed by the specified AI model
-                            # 4. All without revealing the actual image
-                            # This enables trustless verification on the blockchain
-                            # while maintaining complete patient privacy.
-                            zk_proof = None
-                            tee_proof = None
-                            blockchain_proof_bytes = None
-                            timestamp = int(time.time())
-                            
-                            if zk_generator and image_commitment:
-                                try:
-                                    # Generate standard ZK proof
-                                    zk_proof = zk_generator.generate_analysis_proof(
-                                        image_commitment=image_commitment,
-                                        ai_response=result,
-                                        timestamp=timestamp
-                                    )
-                                    print(f"🔐 ZK Proof generated successfully")
-                                    print(f"   Proof type: {zk_proof.get('proof_type')}")
-                                    print(f"   Analysis hash: {zk_proof.get('analysis_hash', '')[:16]}...")
-                                    
-                                    # ZK PROOF STEP 3: Generate Atoma TEE attestation
-                                    # This proves the computation happened in Atoma's
-                                    # Trusted Execution Environment (TEE), providing
-                                    # hardware-level security guarantees.
-                                    tee_proof = zk_generator.create_atoma_tee_proof(result)
-                                    print(f"🛡️ TEE Attestation generated")
-                                    print(f"   Enclave ID: {tee_proof.get('tee_attestation', {}).get('enclave_id', 'N/A')}")
-                                    
-                                    # Convert proof to blockchain format (bytes for Sui Move)
-                                    blockchain_proof_bytes = create_proof_for_blockchain(zk_proof)
-                                    proof_b64 = base64.b64encode(blockchain_proof_bytes).decode('utf-8')
-                                    print(f"📦 Blockchain proof prepared ({len(blockchain_proof_bytes)} bytes)")
-                                    
-                                    # Add ZK proof data to result
-                                    result['image_commitment'] = image_commitment
-                                    result['zk_proof'] = zk_proof
-                                    result['tee_attestation'] = tee_proof.get('tee_attestation')
-                                    result['blockchain_proof_bytes'] = proof_b64
-                                    result['zk_timestamp'] = timestamp
-                                    
-                                except Exception as zk_error:
-                                    print(f"⚠️ Warning: Failed to generate ZK proof: {zk_error}")
-                                    print("   Analysis will continue without ZK proof")
-                            
-                            # Store analysis in memory for doctor dashboard
-                            analysis_record = {
-                                "id": len(analyses_storage) + 1,
-                                "timestamp": datetime.now().isoformat(),
-                                "patient_id": "anonymous",  # In production, get from auth
-                                "file_name": file.filename or "unknown.dcm",
-                                "result": result
+                        image = image.convert('RGB')
+                
+                # Save to temporary memory buffer as PNG
+                png_buffer = BytesIO()
+                image.save(png_buffer, format='PNG')
+                png_buffer.seek(0)
+                
+                # Convert PNG buffer to base64
+                png_bytes = png_buffer.getvalue()
+                image_base64 = base64.b64encode(png_bytes).decode('utf-8')
+                print(f"📷 Image file ({file.content_type}) processed and converted to PNG")
+            except Exception as img_error:
+                print(f"⚠️ Failed to process image file: {img_error}")
+                return JSONResponse(
+                    content={"status": "error", "message": f"Failed to process image: {str(img_error)}"},
+                    status_code=400
+                )
+        
+        # If we couldn't process the file as an image
+        if image_base64 is None:
+            return JSONResponse(
+                content={"status": "error", "message": "Unsupported file type. Please upload a DICOM (.dcm), JPEG, or PNG image file."},
+                status_code=400
+            )
+        
+        # Check if DEMO_MODE is enabled OR if Atoma is not configured
+        use_demo_mode = DEMO_MODE or client is None
+        
+        # Try to use Atoma API first (unless in demo mode)
+        if not use_demo_mode:
+            try:
+                # Check if Atoma has a vision model available
+                vision_model = await has_vision_model_available()
+                has_vision = vision_model is not None
+                
+                # Prepare messages with system prompt
+                messages = [
+                    {
+                        "role": "system",
+                        "content": SYSTEM_PROMPT
+                    }
+                ]
+                
+                # Crucial Logic: If Atoma has a Vision model, send image as base64
+                # If NOT, use placeholder text prompt
+                if has_vision:
+                    # Vision model available: Send image buffer as base64
+                    messages.append({
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{image_base64}"
+                                }
                             }
-                            analyses_storage.append(analysis_record)
-                            # Keep only last 100 analyses in memory
-                            if len(analyses_storage) > 100:
-                                analyses_storage.pop(0)
-                            print(f"📊 Analysis stored: {analysis_record['id']} - {result.get('status', 'Unknown')}")
-                            
-                            return JSONResponse(
-                                content=result,
-                                status_code=200
-                            )
-                        except ValueError as parse_error:
-                            # Handle UNREADABLE status or parsing errors
-                            error_msg = str(parse_error)
-                            if 'UNREADABLE' in error_msg or 'unreadable' in error_msg:
-                                return JSONResponse(
-                                    content={
-                                        "status": "error",
-                                        "message": error_msg,
-                                        "error_type": "UNREADABLE"
-                                    },
-                                    status_code=400
+                        ]
+                    })
+                    model_to_use = vision_model
+                else:
+                    # No vision model: Use placeholder text prompt
+                    messages.append({
+                        "role": "user",
+                        "content": "Analyze this text report of an X-ray..."
+                    })
+                    # Use a default text model
+                    model_to_use = "llama-3.2-90b"
+                
+                # Call AtomaSDK chat completions
+                # Note: Using client.chat.create (SDK structure) 
+                # which is conceptually equivalent to client.chat.completions.create
+                response = await client.chat.create(
+                    messages=messages,
+                    model=model_to_use
+                )
+                
+                # Extract response content
+                if hasattr(response, 'choices') and len(response.choices) > 0:
+                    content = response.choices[0].message.content
+                    
+                    # Robust JSON parsing with markdown handling
+                    try:
+                        result = parse_json_response(content)
+                        
+                        # Apply hallucination check before returning
+                        result = check_hallucination(result)
+                        
+                        # Generate hash for blockchain storage (legacy compatibility)
+                        result_str = json.dumps(result, sort_keys=True)
+                        result['hash'] = hashlib.sha256(result_str.encode()).hexdigest()
+                        
+                        # ZK PROOF STEP 2: Generate zero-knowledge proof of analysis
+                        # This proves that:
+                        # 1. We analyzed the committed image (image_commitment)
+                        # 2. We got these specific results (result)
+                        # 3. The analysis was performed by the specified AI model
+                        # 4. All without revealing the actual image
+                        # This enables trustless verification on the blockchain
+                        # while maintaining complete patient privacy.
+                        zk_proof = None
+                        tee_proof = None
+                        blockchain_proof_bytes = None
+                        timestamp = int(time.time())
+                        
+                        if zk_generator and image_commitment:
+                            try:
+                                # Generate standard ZK proof
+                                zk_proof = zk_generator.generate_analysis_proof(
+                                    image_commitment=image_commitment,
+                                    ai_response=result,
+                                    timestamp=timestamp
                                 )
-                            # Other parsing errors
+                                print(f"🔐 ZK Proof generated successfully")
+                                print(f"   Proof type: {zk_proof.get('proof_type')}")
+                                print(f"   Analysis hash: {zk_proof.get('analysis_hash', '')[:16]}...")
+                                
+                                # ZK PROOF STEP 3: Generate Atoma TEE attestation
+                                # This proves the computation happened in Atoma's
+                                # Trusted Execution Environment (TEE), providing
+                                # hardware-level security guarantees.
+                                tee_proof = zk_generator.create_atoma_tee_proof(result)
+                                print(f"🛡️ TEE Attestation generated")
+                                print(f"   Enclave ID: {tee_proof.get('tee_attestation', {}).get('enclave_id', 'N/A')}")
+                                
+                                # Convert proof to blockchain format (bytes for Sui Move)
+                                blockchain_proof_bytes = create_proof_for_blockchain(zk_proof)
+                                proof_b64 = base64.b64encode(blockchain_proof_bytes).decode('utf-8')
+                                print(f"📦 Blockchain proof prepared ({len(blockchain_proof_bytes)} bytes)")
+                                
+                                # Add ZK proof data to result
+                                result['image_commitment'] = image_commitment
+                                result['zk_proof'] = zk_proof
+                                result['tee_attestation'] = tee_proof.get('tee_attestation')
+                                result['blockchain_proof_bytes'] = proof_b64
+                                result['zk_timestamp'] = timestamp
+                                
+                            except Exception as zk_error:
+                                print(f"⚠️ Warning: Failed to generate ZK proof: {zk_error}")
+                                print("   Analysis will continue without ZK proof")
+                        
+                        # Create metadata object
+                        analysis_duration = time.time() - start_time
+                        metadata = {
+                            "patient_address": patient_address or "anonymous",
+                            "timestamp": timestamp or datetime.utcnow().isoformat(),
+                            "image_name": image_name or file.filename or "unknown",
+                            "image_size": int(image_size) if image_size else (file.size or 0),
+                            "image_type": file.content_type,
+                            "model_used": MODEL_ID,
+                            "analysis_duration": analysis_duration
+                        }
+                        
+                        print(f"📋 Metadata created: {json.dumps(metadata, indent=2)}")
+                        
+                        # Add metadata to result
+                        result['metadata'] = metadata
+                        
+                        # Log what we're returning
+                        print(f"📤 Returning analysis for: {metadata['patient_address']}")
+                        print(f"   Status: {result.get('status', 'Unknown')}")
+                        print(f"   Severity: {result.get('severity', 'Unknown')}")
+                        print(f"   Model: {metadata['model_used']}")
+                        print(f"   Duration: {analysis_duration:.2f}s")
+                        
+                        # Store analysis in memory for doctor dashboard with metadata
+                        analysis_record = {
+                            "id": len(analyses_storage) + 1,
+                            "timestamp": metadata['timestamp'],
+                            "patient_id": metadata['patient_address'],
+                            "file_name": metadata['image_name'],
+                            "result": result,
+                            "metadata": metadata
+                        }
+                        analyses_storage.append(analysis_record)
+                        # Keep only last 100 analyses in memory
+                        if len(analyses_storage) > 100:
+                            analyses_storage.pop(0)
+                        print(f"📊 Analysis stored: {analysis_record['id']} - {result.get('status', 'Unknown')}")
+                        
+                        # Cache last analysis for debugging
+                        last_analysis_cache = {
+                            "request_metadata": {
+                                "patient_address": patient_address,
+                                "timestamp": timestamp,
+                                "image_name": image_name,
+                                "image_size": image_size
+                            },
+                            "response_metadata": metadata,
+                            "result": result
+                        }
+                        
+                        return JSONResponse(
+                            content=result,
+                            status_code=200
+                        )
+                    except ValueError as parse_error:
+                        # Handle UNREADABLE status or parsing errors
+                        error_msg = str(parse_error)
+                        if 'UNREADABLE' in error_msg or 'unreadable' in error_msg:
                             return JSONResponse(
                                 content={
                                     "status": "error",
-                                    "message": f"Failed to parse AI response: {error_msg}",
-                                    "raw_content": content[:200]  # First 200 chars for debugging
+                                    "message": error_msg,
+                                    "error_type": "UNREADABLE"
                                 },
-                                status_code=500
+                                status_code=400
                             )
-                        except json.JSONDecodeError as json_error:
-                            # Fallback: return raw content if JSON parsing completely fails
-                            print(f"⚠️ JSON parsing failed: {str(json_error)}")
-                            return JSONResponse(
-                                content={
-                                    "findings": content,
-                                    "severity": "unknown",
-                                    "confidence": 0,
-                                    "warning": "Response format was not valid JSON - returning raw content"
-                                },
-                                status_code=200
-                            )
-                    else:
-                        # No response from model - fall through to demo mode
-                        raise Exception("No response from Atoma model")
-                        
-                except Exception as api_error:
-                    # If Atoma call fails, log and fall back to demo mode
-                    print(f"⚠️ Atoma API call failed: {str(api_error)}")
-                    print("🔄 Falling back to demo mode...")
-                    use_demo_mode = True
-            
-            # Use demo mode if DEMO_MODE is True OR if Atoma call failed
-            if use_demo_mode:
+                        # Other parsing errors
+                        return JSONResponse(
+                            content={
+                                "status": "error",
+                                "message": f"Failed to parse AI response: {error_msg}",
+                                "raw_content": content[:200]  # First 200 chars for debugging
+                            },
+                            status_code=500
+                        )
+                    except json.JSONDecodeError as json_error:
+                        # Fallback: return raw content if JSON parsing completely fails
+                        print(f"⚠️ JSON parsing failed: {str(json_error)}")
+                        return JSONResponse(
+                            content={
+                                "findings": content,
+                                "severity": "unknown",
+                                "confidence": 0,
+                                "warning": "Response format was not valid JSON - returning raw content"
+                            },
+                            status_code=200
+                        )
+                else:
+                    # No response from model - fall through to demo mode
+                    raise Exception("No response from Atoma model")
+                    
+            except Exception as api_error:
+                # If Atoma call fails, log and fall back to demo mode
+                print(f"⚠️ Atoma API call failed: {str(api_error)}")
+                print("🔄 Falling back to demo mode...")
+                use_demo_mode = True
+        
+        # Use demo mode if DEMO_MODE is True OR if Atoma call failed
+        if use_demo_mode:
                 print("🎭 Using DEMO MODE - Generating mock response")
                 
                 # Determine image type from filename if possible
@@ -687,6 +805,20 @@ async def analyze_image(file: UploadFile = File(...)):
                 # Generate hash for blockchain storage (legacy compatibility)
                 result_str = json.dumps(demo_result, sort_keys=True)
                 demo_result['hash'] = hashlib.sha256(result_str.encode()).hexdigest()
+                
+                # Create metadata for demo mode
+                analysis_duration = time.time() - start_time
+                demo_metadata = {
+                    "patient_address": patient_address or "anonymous",
+                    "timestamp": timestamp or datetime.utcnow().isoformat(),
+                    "image_name": image_name or file.filename or "unknown",
+                    "image_size": int(image_size) if image_size else (file.size or 0),
+                    "image_type": file.content_type,
+                    "model_used": MODEL_ID,
+                    "analysis_duration": analysis_duration
+                }
+                
+                print(f"📋 Demo mode metadata: {json.dumps(demo_metadata, indent=2)}")
                 
                 # ZK PROOF STEP 2 & 3: Generate ZK proofs even in demo mode
                 # This demonstrates the system works end-to-end and generates
@@ -729,13 +861,24 @@ async def analyze_image(file: UploadFile = File(...)):
                         print(f"⚠️ Warning: Failed to generate ZK proof in demo mode: {zk_error}")
                         print("   Demo analysis will continue without ZK proof")
                 
-                # Store analysis in memory for doctor dashboard
+                # Add metadata to demo result
+                demo_result['metadata'] = demo_metadata
+                
+                # Log what we're returning (demo mode)
+                print(f"📤 Returning demo analysis for: {demo_metadata['patient_address']}")
+                print(f"   Status: {demo_result.get('status', 'Unknown')}")
+                print(f"   Severity: {demo_result.get('severity', 'Unknown')}")
+                print(f"   Model: {demo_metadata['model_used']}")
+                print(f"   Duration: {analysis_duration:.2f}s")
+                
+                # Store analysis in memory for doctor dashboard with metadata
                 analysis_record = {
                     "id": len(analyses_storage) + 1,
-                    "timestamp": datetime.now().isoformat(),
-                    "patient_id": "anonymous",  # In production, get from auth
-                    "file_name": file.filename or "unknown.dcm",
-                    "result": demo_result
+                    "timestamp": demo_metadata['timestamp'],
+                    "patient_id": demo_metadata['patient_address'],
+                    "file_name": demo_metadata['image_name'],
+                    "result": demo_result,
+                    "metadata": demo_metadata
                 }
                 analyses_storage.append(analysis_record)
                 # Keep only last 100 analyses in memory
@@ -743,17 +886,22 @@ async def analyze_image(file: UploadFile = File(...)):
                     analyses_storage.pop(0)
                 print(f"📊 Demo analysis stored: {analysis_record['id']} - {demo_result.get('status', 'Unknown')}")
                 
+                # Cache last analysis for debugging
+                last_analysis_cache = {
+                    "request_metadata": {
+                        "patient_address": patient_address,
+                        "timestamp": timestamp,
+                        "image_name": image_name,
+                        "image_size": image_size
+                    },
+                    "response_metadata": demo_metadata,
+                    "result": demo_result
+                }
+                
                 return JSONResponse(
                     content=demo_result,
                     status_code=200
                 )
-        else:
-            # If not a DICOM file, still try to analyze with Atoma
-            # (could be a PNG/JPEG image)
-            return JSONResponse(
-                content={"status": "error", "message": "Only DICOM files are supported"},
-                status_code=400
-            )
     
     except pydicom.errors.InvalidDicomError:
         # File is not a valid DICOM file
@@ -800,6 +948,23 @@ async def get_status():
         "version": "1.0.0"
     }
 
+
+@app.get("/debug/last-analysis")
+async def get_last_analysis():
+    """
+    Returns the last analysis for debugging.
+    Helps verify metadata consistency between upload and response.
+    """
+    global last_analysis_cache
+    if last_analysis_cache is None:
+        return JSONResponse(
+            content={"error": "No analysis cached yet. Upload an image first."},
+            status_code=404
+        )
+    return JSONResponse(
+        content=last_analysis_cache,
+        status_code=200
+    )
 
 @app.get("/ping")
 async def ping():
@@ -904,48 +1069,93 @@ async def verify_proof(request: Request):
                 status_code=503
             )
         
+        # Check proof structure first
+        required_fields = ["proof_type", "version", "image_commitment", "analysis_hash", "signature", "public_key", "model_id", "timestamp", "nonce"]
+        missing_fields = [field for field in required_fields if field not in proof]
+        
+        if missing_fields:
+            print(f"❌ Proof missing required fields: {missing_fields}")
+            return JSONResponse(
+                content={
+                    "valid": False,
+                    "is_valid": False,
+                    "error": f"Proof missing required fields: {missing_fields}",
+                    "proof_structure_valid": False
+                },
+                status_code=400
+            )
+        
+        print(f"   Proof structure valid: all required fields present")
+        
         # Verify the proof
+        print(f"   Verifying signature and commitment...")
         is_valid = zk_generator.verify_proof(proof, expected_commitment)
         
         # Extract verification details
+        commitment_valid = True
+        if expected_commitment:
+            commitment_valid = (proof.get("image_commitment") == expected_commitment)
+            print(f"   Commitment match: {commitment_valid}")
+            if not commitment_valid:
+                print(f"   Expected: {expected_commitment[:32]}...")
+                print(f"   Got:      {proof.get('image_commitment', '')[:32]}...")
+        
+        proof_structure_valid = all(key in proof for key in required_fields)
+        
         verification_details = {
-            "signature_valid": is_valid,  # Simplified - in production, extract more details
-            "commitment_valid": True if not expected_commitment or proof.get("image_commitment") == expected_commitment else False,
-            "proof_structure_valid": all(key in proof for key in ["proof_type", "version", "image_commitment", "analysis_hash", "signature", "public_key"])
+            "signature_valid": is_valid,
+            "commitment_valid": commitment_valid,
+            "proof_structure_valid": proof_structure_valid,
+            "has_expected_commitment": expected_commitment is not None
         }
         
         result = {
             "valid": is_valid,
+            "is_valid": is_valid,  # Support both field names
             "proof_type": proof.get("proof_type"),
             "timestamp": proof.get("timestamp"),
             "model_id": proof.get("model_id"),
+            "image_commitment": proof.get("image_commitment", "")[:32] + "..." if proof.get("image_commitment") else None,
             "verification_details": verification_details
         }
         
         if is_valid:
             print(f"✅ Proof verification successful")
+            print(f"   Signature: Valid")
+            print(f"   Commitment: {'Valid' if commitment_valid else 'Not checked'}")
+            print(f"   Structure: Valid")
         else:
             print(f"❌ Proof verification failed")
+            print(f"   Signature: {'Valid' if verification_details['signature_valid'] else 'Invalid'}")
+            print(f"   Commitment: {'Valid' if commitment_valid else 'Invalid'}")
+            print(f"   Structure: {'Valid' if proof_structure_valid else 'Invalid'}")
         
         return JSONResponse(
             content=result,
             status_code=200
         )
         
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as json_err:
+        print(f"❌ Invalid JSON in request: {json_err}")
         return JSONResponse(
             content={
                 "valid": False,
-                "error": "Invalid JSON in request body"
+                "is_valid": False,
+                "error": "Invalid JSON in request body",
+                "details": str(json_err)
             },
             status_code=400
         )
     except Exception as e:
-        print(f"❌ Error verifying proof: {e}")
+        print(f"❌ Error during proof verification: {e}")
+        import traceback
+        traceback.print_exc()
         return JSONResponse(
             content={
                 "valid": False,
-                "error": str(e)
+                "is_valid": False,
+                "error": str(e),
+                "error_type": type(e).__name__
             },
             status_code=500
         )

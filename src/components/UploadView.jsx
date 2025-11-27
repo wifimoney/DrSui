@@ -8,6 +8,7 @@ import { Transaction } from '@mysten/sui/transactions';
 import { recordScan, recordVerification } from './AnalyticsPanel';
 import { useSponsoredTx } from '../hooks/useSponsoredTx';
 import { GasStationStatus } from './GasStationStatus';
+import { toast } from 'sonner';
 
 /**
  * React Environment Variables
@@ -191,11 +192,26 @@ export function UploadView() {
 
     console.log('🚀 Starting image analysis...');
     console.log('📤 Upload URL:', `${BACKEND_URL}/analyze`);
+    
+    // Capture upload timestamp in ISO 8601 format
+    const uploadTimestamp = new Date().toISOString();
+    
+    // Prepare metadata to send
+    const metadata = {
+      patient_address: account?.address || 'Anonymous',
+      timestamp: uploadTimestamp,
+      image_name: file.name,
+      image_size: file.size,
+      image_type: file.type
+    };
+    
     console.log('📁 File details:', {
       name: file.name,
       size: file.size,
       type: file.type
     });
+    
+    console.log('📋 Metadata being sent:', metadata);
 
     // Set loading state to show spinner/loading indicator
     setLoading(true);
@@ -206,7 +222,23 @@ export function UploadView() {
       // FormData is used for multipart/form-data file uploads
       const formData = new FormData();
       formData.append('file', file);
-      console.log('📦 FormData created with file');
+      
+      // Append metadata fields
+      if (account?.address) {
+        formData.append('patient_address', account.address);
+      }
+      formData.append('timestamp', uploadTimestamp);
+      formData.append('image_name', file.name);
+      formData.append('image_size', file.size.toString());
+      
+      console.log('📦 FormData created with file and metadata');
+      console.log('📤 Sending to backend:', {
+        patient_address: account?.address || 'Anonymous',
+        timestamp: uploadTimestamp,
+        image_name: file.name,
+        image_size: file.size,
+        image_type: file.type
+      });
 
       // POST request to backend analysis endpoint
       // Uses BACKEND_URL from environment variable (process.env.REACT_APP_BACKEND_URL)
@@ -232,27 +264,65 @@ export function UploadView() {
 
       // Parse JSON response from backend
       const result = await response.json();
-      console.log('✅ Analysis complete:', result);
+      console.log('✅ Analysis complete - Full response:', result);
+      console.log('📥 Received from backend:', {
+        status: result.status,
+        metadata: result.metadata,
+        report: result.report ? 'Present' : 'Missing',
+        hash: result.hash,
+        model: result.model || result.ai_model
+      });
+      
+      // Validate metadata sync
+      if (result.metadata) {
+        const mismatches = [];
+        if (metadata.patient_address !== result.metadata.patient_address && result.metadata.patient_address !== 'anonymous') {
+          mismatches.push('Patient address mismatch');
+        }
+        if (metadata.timestamp !== result.metadata.timestamp) {
+          mismatches.push('Timestamp mismatch');
+        }
+        if (metadata.image_name !== result.metadata.image_name) {
+          mismatches.push('Image name mismatch');
+        }
+        
+        if (mismatches.length > 0) {
+          console.error('❌ Metadata mismatches found:', mismatches);
+          console.table({
+            'Sent': metadata,
+            'Received': result.metadata
+          });
+        } else {
+          console.log('✅ Metadata in sync');
+        }
+      }
       
       // Store AI analysis results in state
       // Result should contain: findings, severity, confidence, hash, etc.
       setAiResult(result);
       
-      // Save to localStorage for doctor dashboard
+      // Save to localStorage for doctor dashboard with complete metadata
       try {
         const analyses = JSON.parse(localStorage.getItem('drsui_analyses') || '[]');
         const newAnalysis = {
           id: Date.now(),
-          timestamp: new Date().toISOString(),
-          patientId: account?.address || 'Anonymous',
-          fileName: file.name,
+          timestamp: result.metadata?.timestamp || uploadTimestamp,
+          patientId: result.metadata?.patient_address || account?.address || 'Anonymous',
+          fileName: result.metadata?.image_name || file.name,
           result: result,
+          metadata: result.metadata || {
+            patient_address: account?.address || 'Anonymous',
+            timestamp: uploadTimestamp,
+            image_name: file.name,
+            image_size: file.size,
+            image_type: file.type
+          }
         };
         analyses.unshift(newAnalysis); // Add to beginning
         // Keep only last 50 analyses
         const recentAnalyses = analyses.slice(0, 50);
         localStorage.setItem('drsui_analyses', JSON.stringify(recentAnalyses));
-        console.log('💾 Analysis saved to localStorage');
+        console.log('💾 Analysis saved to localStorage with metadata:', newAnalysis.metadata);
         
         // Dispatch event to notify doctor dashboard
         window.dispatchEvent(new CustomEvent('drsui_new_analysis', { detail: newAnalysis }));
@@ -307,37 +377,82 @@ export function UploadView() {
 
     try {
       console.log('🔍 Verifying ZK proof...');
+      console.log('📋 Proof data:', {
+        proof_type: aiResult.zk_proof?.proof_type,
+        has_signature: !!aiResult.zk_proof?.signature,
+        has_public_key: !!aiResult.zk_proof?.public_key,
+        image_commitment: aiResult.image_commitment?.slice(0, 32) + '...' || 'Missing'
+      });
+      
+      const requestBody = {
+        proof: aiResult.zk_proof,
+        expected_commitment: aiResult.image_commitment || null
+      };
+      
+      console.log('📤 Sending verification request:', {
+        has_proof: !!requestBody.proof,
+        has_commitment: !!requestBody.expected_commitment
+      });
       
       const response = await fetch(`${BACKEND_URL}/verify-proof`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          proof: aiResult.zk_proof,
-          expected_commitment: aiResult.image_commitment
-        })
+        body: JSON.stringify(requestBody)
       });
 
+      console.log('📥 Verification response status:', response.status);
+
       if (!response.ok) {
-        throw new Error(`Verification failed: ${response.status}`);
+        const errorData = await response.json().catch(() => ({ message: 'Verification failed' }));
+        throw new Error(errorData.message || errorData.error || `Server error: ${response.status}`);
       }
 
       const result = await response.json();
+      console.log('✅ Verification response received:', result);
+      
       const isValid = result.is_valid || result.valid || false;
       setProofVerified(isValid);
       
+      // Log verification details
+      if (result.verification_details) {
+        console.log('📊 Verification details:', {
+          signature_valid: result.verification_details.signature_valid,
+          commitment_valid: result.verification_details.commitment_valid,
+          proof_structure_valid: result.verification_details.proof_structure_valid
+        });
+      }
+      
       if (isValid) {
-        console.log('✅ Proof verification successful');
+        console.log('✅ Proof verification successful!');
         // Record verification in analytics
-        recordVerification(true);
+        recordVerification();
+        toast.success('Proof verified!', {
+          description: 'ZK proof is cryptographically valid and untampered',
+          duration: 5000,
+        });
       } else {
         console.warn('❌ Proof verification failed');
-        setError('Proof verification failed. The proof may be invalid or tampered with.');
-        recordVerification(false);
+        const reason = result.verification_details ? 
+          `Signature: ${result.verification_details.signature_valid ? 'Valid' : 'Invalid'}, ` +
+          `Commitment: ${result.verification_details.commitment_valid ? 'Valid' : 'Invalid'}, ` +
+          `Structure: ${result.verification_details.proof_structure_valid ? 'Valid' : 'Invalid'}` :
+          'Unknown reason';
+        setError(`Proof verification failed. ${reason}`);
+        recordVerification();
+        toast.error('Proof verification failed', {
+          description: `The proof may be invalid or tampered with. ${reason}`,
+          duration: 7000,
+        });
       }
     } catch (err) {
       console.error('❌ Verification error:', err);
-      setError(`Failed to verify proof: ${err.message}`);
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      setError(`Failed to verify proof: ${errorMessage}`);
       setProofVerified(false);
+      toast.error('Verification failed', {
+        description: errorMessage,
+        duration: 5000,
+      });
     } finally {
       setLoading(false);
     }

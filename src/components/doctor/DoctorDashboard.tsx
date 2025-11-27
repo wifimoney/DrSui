@@ -11,6 +11,16 @@ import { useCurrentAccount } from '@mysten/dapp-kit';
 // Note: In Vite, process.env is not available in browser, must use import.meta.env
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
+interface AnalysisMetadata {
+  patient_address?: string;
+  timestamp?: string;
+  image_name?: string;
+  image_size?: number;
+  image_type?: string;
+  model_used?: string;
+  analysis_duration?: number;
+}
+
 interface AnalysisResult {
   id: number;
   timestamp: string;
@@ -32,7 +42,9 @@ interface AnalysisResult {
     image_commitment?: string;
     zk_proof?: any;
     tee_attestation?: any;
+    metadata?: AnalysisMetadata;
   };
+  metadata?: AnalysisMetadata;
 }
 
 interface DiagnosticAnalysisResult {
@@ -88,8 +100,49 @@ export function DoctorDashboard() {
       
       if (response.ok) {
         const data = await response.json();
-        console.log(`✅ Retrieved ${data.returned} analyses from backend`);
-        setAnalyses(data.analyses || []);
+        console.log(`✅ Retrieved ${data.returned || data.analyses?.length || 0} analyses from backend`);
+        console.log('📊 Backend data structure:', {
+          total: data.total,
+          returned: data.returned,
+          sample_analysis: data.analyses?.[0] ? {
+            id: data.analyses[0].id,
+            timestamp: data.analyses[0].timestamp,
+            patient_id: data.analyses[0].patient_id,
+            file_name: data.analyses[0].file_name,
+            has_metadata: !!data.analyses[0].metadata,
+            has_result_metadata: !!data.analyses[0].result?.metadata
+          } : null
+        });
+        
+        // Transform backend data to match frontend interface
+        const transformedAnalyses = (data.analyses || []).map((analysis: any) => {
+          const metadata = analysis.metadata || analysis.result?.metadata || {};
+          console.log('🔄 Transforming analysis:', {
+            original_id: analysis.id,
+            metadata: metadata,
+            patient_id: analysis.patient_id || metadata.patient_address,
+            timestamp: analysis.timestamp || metadata.timestamp
+          });
+          
+          return {
+            id: analysis.id,
+            timestamp: analysis.timestamp || metadata.timestamp || new Date().toISOString(),
+            patientId: analysis.patient_id || metadata.patient_address || 'Unknown',
+            fileName: analysis.file_name || metadata.image_name || 'Unknown',
+            result: analysis.result || {},
+            metadata: metadata
+          };
+        });
+        
+        console.log('📋 Transformed analyses:', transformedAnalyses.map((a: any) => ({
+          id: a.id,
+          patientId: a.patientId,
+          fileName: a.fileName,
+          timestamp: a.timestamp,
+          has_metadata: !!a.metadata
+        })));
+        
+        setAnalyses(transformedAnalyses);
         setError(null);
       } else {
         throw new Error(`Backend returned status ${response.status}`);
@@ -102,6 +155,14 @@ export function DoctorDashboard() {
         if (stored) {
           const parsed = JSON.parse(stored);
           console.log(`✅ Retrieved ${parsed.length} analyses from localStorage`);
+          console.log('📊 LocalStorage data sample:', parsed[0] ? {
+            id: parsed[0].id,
+            patientId: parsed[0].patientId,
+            fileName: parsed[0].fileName,
+            timestamp: parsed[0].timestamp,
+            has_metadata: !!parsed[0].metadata,
+            has_result_metadata: !!parsed[0].result?.metadata
+          } : null);
           setAnalyses(parsed);
         } else {
           setAnalyses([]);
@@ -230,10 +291,40 @@ export function DoctorDashboard() {
     setProofVerified(false);
 
     try {
+      // Capture upload timestamp in ISO 8601 format
+      const uploadTimestamp = new Date().toISOString();
+      
+      // Prepare metadata to send
+      const metadata = {
+        patient_address: account?.address || 'Doctor',
+        timestamp: uploadTimestamp,
+        image_name: uploadedFile.name,
+        image_size: uploadedFile.size,
+        image_type: uploadedFile.type
+      };
+      
+      console.log('🔬 Starting diagnostic analysis...');
+      console.log('📋 Metadata being sent:', metadata);
+      
       const formData = new FormData();
       formData.append('file', uploadedFile);
+      
+      // Append metadata fields
+      if (account?.address) {
+        formData.append('patient_address', account.address);
+      }
+      formData.append('timestamp', uploadTimestamp);
+      formData.append('image_name', uploadedFile.name);
+      formData.append('image_size', uploadedFile.size.toString());
+      
+      console.log('📤 Sending to backend:', {
+        patient_address: account?.address || 'Doctor',
+        timestamp: uploadTimestamp,
+        image_name: uploadedFile.name,
+        image_size: uploadedFile.size,
+        image_type: uploadedFile.type
+      });
 
-      console.log('🔬 Starting diagnostic analysis...');
       const response = await fetch(`${BACKEND_URL}/analyze`, {
         method: 'POST',
         body: formData,
@@ -245,7 +336,39 @@ export function DoctorDashboard() {
       }
 
       const result = await response.json();
-      console.log('✅ Diagnostic analysis complete:', result);
+      console.log('✅ Diagnostic analysis complete - Full response:', result);
+      console.log('📥 Received from backend:', {
+        status: result.status,
+        metadata: result.metadata,
+        report: result.report ? 'Present' : 'Missing',
+        hash: result.hash,
+        model: result.model || result.ai_model
+      });
+      
+      // Validate metadata sync
+      if (result.metadata) {
+        const mismatches = [];
+        if (metadata.patient_address !== result.metadata.patient_address && result.metadata.patient_address !== 'anonymous') {
+          mismatches.push('Patient address mismatch');
+        }
+        if (metadata.timestamp !== result.metadata.timestamp) {
+          mismatches.push('Timestamp mismatch');
+        }
+        if (metadata.image_name !== result.metadata.image_name) {
+          mismatches.push('Image name mismatch');
+        }
+        
+        if (mismatches.length > 0) {
+          console.error('❌ Metadata mismatches found:', mismatches);
+          console.table({
+            'Sent': metadata,
+            'Received': result.metadata
+          });
+        } else {
+          console.log('✅ Metadata in sync');
+        }
+      }
+      
       setAnalysisResult(result);
       toast.success('Analysis complete!', {
         description: `Status: ${result.status || 'Unknown'}`,
@@ -268,38 +391,91 @@ export function DoctorDashboard() {
   const handleVerifyProof = async () => {
     if (!analysisResult?.zk_proof) {
       setAnalysisError('No ZK proof available to verify');
+      toast.error('No proof available', {
+        description: 'Please analyze an image first to generate a ZK proof',
+      });
       return;
     }
 
     setIsAnalyzing(true);
     setAnalysisError(null);
+    setProofVerified(false);
 
     try {
+      console.log('🔍 Verifying ZK proof...');
+      console.log('📋 Proof data:', {
+        proof_type: analysisResult.zk_proof?.proof_type,
+        has_signature: !!analysisResult.zk_proof?.signature,
+        has_public_key: !!analysisResult.zk_proof?.public_key,
+        image_commitment: analysisResult.image_commitment?.slice(0, 32) + '...' || 'Missing'
+      });
+      
+      const requestBody = {
+        proof: analysisResult.zk_proof,
+        expected_commitment: analysisResult.image_commitment || null
+      };
+      
+      console.log('📤 Sending verification request:', {
+        has_proof: !!requestBody.proof,
+        has_commitment: !!requestBody.expected_commitment
+      });
+
       const response = await fetch(`${BACKEND_URL}/verify-proof`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(analysisResult.zk_proof),
+        body: JSON.stringify(requestBody),
       });
 
+      console.log('📥 Verification response status:', response.status);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ message: 'Verification failed' }));
+        throw new Error(errorData.message || errorData.error || `Server error: ${response.status}`);
+      }
+
       const result = await response.json();
+      console.log('✅ Verification response received:', result);
+      
       const isValid = result.is_valid || result.valid || false;
       setProofVerified(isValid);
+      
+      // Log verification details
+      if (result.verification_details) {
+        console.log('📊 Verification details:', {
+          signature_valid: result.verification_details.signature_valid,
+          commitment_valid: result.verification_details.commitment_valid,
+          proof_structure_valid: result.verification_details.proof_structure_valid
+        });
+      }
 
       if (isValid) {
+        console.log('✅ Proof verification successful!');
         toast.success('Proof verified!', {
-          description: 'ZK proof is cryptographically valid',
+          description: 'ZK proof is cryptographically valid and untampered',
+          duration: 5000,
         });
       } else {
+        console.warn('❌ Proof verification failed');
+        const reason = result.verification_details ? 
+          `Signature: ${result.verification_details.signature_valid ? 'Valid' : 'Invalid'}, ` +
+          `Commitment: ${result.verification_details.commitment_valid ? 'Valid' : 'Invalid'}, ` +
+          `Structure: ${result.verification_details.proof_structure_valid ? 'Valid' : 'Invalid'}` :
+          'Unknown reason';
         toast.error('Proof verification failed', {
-          description: 'The proof may be invalid or tampered with',
+          description: `The proof may be invalid or tampered with. ${reason}`,
+          duration: 7000,
         });
+        setAnalysisError(`Verification failed: ${reason}`);
       }
     } catch (err) {
       console.error('❌ Verification error:', err);
-      setAnalysisError('Failed to verify proof');
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      setAnalysisError(`Failed to verify proof: ${errorMessage}`);
       toast.error('Verification failed', {
-        description: err instanceof Error ? err.message : 'Unknown error',
+        description: errorMessage,
+        duration: 5000,
       });
+      setProofVerified(false);
     } finally {
       setIsAnalyzing(false);
     }
@@ -449,15 +625,34 @@ export function DoctorDashboard() {
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {analyses.map((analysis) => (
+            {analyses.map((analysis) => {
+              // Get metadata from result or top-level
+              const metadata = analysis.metadata || analysis.result?.metadata || {};
+              const patientAddress = metadata.patient_address || analysis.patientId || 'Unknown';
+              const imageName = metadata.image_name || analysis.fileName || 'Unknown';
+              const uploadTimestamp = metadata.timestamp || analysis.timestamp;
+              const modelUsed = metadata.model_used || analysis.result?.ai_model || analysis.result?.model || 'Unknown';
+              
+              // Log how data is being displayed
+              console.log('📊 Displaying analysis:', {
+                id: analysis.id,
+                patientAddress,
+                imageName,
+                uploadTimestamp,
+                modelUsed,
+                has_metadata: !!metadata,
+                metadata_keys: Object.keys(metadata)
+              });
+              
+              return (
               <Card key={analysis.id} className="p-4 hover:shadow-lg transition">
                 <div className="flex justify-between items-start mb-3">
                   <div>
                     <h3 className="font-semibold text-lg">
-                      {analysis.fileName || 'Unknown File'}
+                      {imageName}
                     </h3>
                     <p className="text-sm text-gray-500">
-                      {truncateAddress(analysis.patientId)} • {formatTimestamp(analysis.timestamp)}
+                      {truncateAddress(patientAddress)} • {formatTimestamp(uploadTimestamp)}
                     </p>
                   </div>
                   {analysis.result.severity && (
@@ -466,6 +661,42 @@ export function DoctorDashboard() {
                     </Badge>
                   )}
                 </div>
+                
+                {/* Metadata Section */}
+                {(metadata.patient_address || metadata.image_name || metadata.model_used) && (
+                  <div className="mb-3 p-2 bg-[#C0E6FF]/10 rounded text-xs space-y-1">
+                    {metadata.patient_address && (
+                      <div className="flex justify-between">
+                        <strong className="text-gray-600">Patient:</strong>
+                        <span className="font-mono">{truncateAddress(metadata.patient_address)}</span>
+                      </div>
+                    )}
+                    {metadata.timestamp && (
+                      <div className="flex justify-between">
+                        <strong className="text-gray-600">Upload Time:</strong>
+                        <span>{new Date(metadata.timestamp).toLocaleString()}</span>
+                      </div>
+                    )}
+                    {metadata.image_size && (
+                      <div className="flex justify-between">
+                        <strong className="text-gray-600">Size:</strong>
+                        <span>{(metadata.image_size / 1024).toFixed(2)} KB</span>
+                      </div>
+                    )}
+                    {modelUsed && (
+                      <div className="flex justify-between">
+                        <strong className="text-gray-600">Model:</strong>
+                        <span>{modelUsed}</span>
+                      </div>
+                    )}
+                    {metadata.analysis_duration && (
+                      <div className="flex justify-between">
+                        <strong className="text-gray-600">Duration:</strong>
+                        <span>{metadata.analysis_duration.toFixed(2)}s</span>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {analysis.result.status && (
                   <p className="text-sm mb-2">
@@ -524,8 +755,30 @@ export function DoctorDashboard() {
                     Hash: {analysis.result.hash.slice(0, 16)}...
                   </p>
                 )}
+                
+                {/* Debug Panel (Development Only) */}
+                {import.meta.env.DEV && metadata && (
+                  <details className="mt-2 text-xs">
+                    <summary className="cursor-pointer text-gray-400 hover:text-gray-600">
+                      🐛 Debug Info
+                    </summary>
+                    <pre className="mt-2 p-2 bg-gray-100 rounded text-xs overflow-auto max-h-40">
+                      {JSON.stringify(metadata, null, 2)}
+                    </pre>
+                    <button
+                      onClick={() => {
+                        console.table(metadata);
+                        console.log('Full analysis object:', analysis);
+                      }}
+                      className="mt-1 text-[#4DA2FF] hover:underline"
+                    >
+                      Log to Console
+                    </button>
+                  </details>
+                )}
               </Card>
-            ))}
+            );
+            })}
           </div>
         )}
       </>
